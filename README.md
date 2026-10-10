@@ -158,7 +158,7 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## 👨‍💻 Author
 
-**Bharadwaj Pola**
+**Pola Bharadwaj**
 
 GitHub: [@bharad1101](https://github.com/bharad1101)
 
