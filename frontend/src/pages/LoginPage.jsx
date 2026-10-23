@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -8,22 +8,46 @@ const LoginPage = () => {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const { login } = useAuth();
+  const { login, isAuthenticated, loading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = location.state?.from?.pathname || '/dashboard';
+
+  const searchParams = new URLSearchParams(location.search);
+  const redirectParam = searchParams.get('redirect');
+  const from = location.state?.from?.pathname
+    ? location.state.from.pathname + (location.state.from.search || '')
+    : redirectParam
+    ? decodeURIComponent(redirectParam)
+    : '/dashboard';
+
+  useEffect(() => {
+    if (!loading && isAuthenticated) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [loading, isAuthenticated, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setSubmitting(true);
 
+    const trimmedEmail = email ? email.trim() : '';
+
     try {
-      await login(email, password);
+      await login(trimmedEmail, password);
       navigate(from, { replace: true });
     } catch (err) {
-      console.error(err);
-      setError(err.response?.data?.message || err.message || 'Invalid credentials.');
+      console.error('Authentication attempt failed:', err);
+      if (!err.response) {
+        setError('Unable to connect to AutoScientist server. Please verify the backend is running.');
+      } else if (err.response.status === 401) {
+        setError(err.response.data?.message || 'Invalid email or password.');
+      } else if (err.response.status === 400 && err.response.data?.data) {
+        const fieldError = Object.values(err.response.data.data)[0];
+        setError(fieldError || err.response.data?.message || 'Invalid input. Please check your credentials.');
+      } else {
+        setError(err.response.data?.message || err.message || 'Authentication failed. Please try again.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -51,10 +75,13 @@ const LoginPage = () => {
 
             <form onSubmit={handleSubmit}>
               <div className="mb-3">
-                <label className="form-label small fw-semibold">Email Address</label>
+                <label className="form-label small fw-semibold" htmlFor="loginEmail">
+                  Email Address
+                </label>
                 <div className="input-group">
                   <span className="input-group-text"><i className="bi bi-envelope"></i></span>
                   <input
+                    id="loginEmail"
                     type="email"
                     className="form-control"
                     placeholder="name@institution.org"
@@ -66,10 +93,13 @@ const LoginPage = () => {
               </div>
 
               <div className="mb-4">
-                <label className="form-label small fw-semibold">Password</label>
+                <label className="form-label small fw-semibold" htmlFor="loginPassword">
+                  Password
+                </label>
                 <div className="input-group">
                   <span className="input-group-text"><i className="bi bi-key"></i></span>
                   <input
+                    id="loginPassword"
                     type="password"
                     className="form-control"
                     placeholder="••••••••"
@@ -98,6 +128,24 @@ const LoginPage = () => {
                 )}
               </button>
             </form>
+
+            <div className="mt-3 p-3 bg-light rounded-3 border text-muted small">
+              <div className="fw-semibold text-dark mb-1 d-flex align-items-center justify-content-between">
+                <span><i className="bi bi-info-circle me-1"></i> Demo Credentials</span>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-primary py-0 px-2"
+                  style={{ fontSize: '0.75rem' }}
+                  onClick={() => {
+                    setEmail('jane@university.edu');
+                    setPassword('SecurePassword123!');
+                  }}
+                >
+                  Quick Fill
+                </button>
+              </div>
+              <div className="font-monospace text-secondary">jane@university.edu / SecurePassword123!</div>
+            </div>
 
             <div className="text-center mt-4 pt-3 border-top">
               <span className="text-muted small">Don't have an account yet? </span>

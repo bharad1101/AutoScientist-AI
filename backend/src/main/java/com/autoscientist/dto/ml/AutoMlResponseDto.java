@@ -20,4 +20,9 @@ public class AutoMlResponseDto {
     private List<FeatureImportanceDto> featureImportances;
     private FairnessDto fairness;
     private String scientificSummary;
+    /** AVAILABLE | AVAILABLE_IN_MEMORY | UNAVAILABLE | UNAVAILABLE_RETRAIN */
+    private String explanationStatus;
+    private Integer datasetVersion;
+    private Long randomSeed;
+    private String engineVersion;
 }

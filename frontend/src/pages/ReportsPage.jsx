@@ -20,6 +20,7 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [exporting, setExporting] = useState('');
   const [error, setError] = useState(null);
 
   const loadData = useCallback(async (targetId) => {
@@ -115,27 +116,46 @@ export default function ReportsPage() {
     }
   };
 
-  const handleDownloadPdf = async (reportId, reportTitle) => {
+  const handleDownload = async (reportId, reportTitle, format = 'pdf') => {
     if (!reportId) return;
-    setDownloading(true);
+    const descriptor = {
+      pdf: { call: () => analysisService.downloadReportPdf(reportId), type: 'application/pdf', ext: 'pdf' },
+      csv: { call: () => analysisService.downloadReportCsv(reportId), type: 'text/csv;charset=utf-8', ext: 'csv' },
+      excel: {
+        call: () => analysisService.downloadReportExcel(reportId),
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ext: 'xlsx',
+      },
+      markdown: {
+        call: () => analysisService.downloadReportMarkdown(reportId),
+        type: 'text/markdown;charset=utf-8',
+        ext: 'md',
+      },
+    }[format];
+
+    if (format === 'pdf') setDownloading(true);
+    else setExporting(format);
     try {
-      const blob = await analysisService.downloadReportPdf(reportId);
-      const url = window.URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+      const blob = await descriptor.call();
+      const url = window.URL.createObjectURL(new Blob([blob], { type: descriptor.type }));
       const link = document.createElement('a');
       link.href = url;
       const cleanTitle = (reportTitle || 'Scientific_Report').replace(/[^a-zA-Z0-9_-]/g, '_');
-      link.setAttribute('download', `${cleanTitle}.pdf`);
+      link.setAttribute('download', `${cleanTitle}.${descriptor.ext}`);
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      console.error('PDF download error:', err);
-      setError('Failed to download PDF report.');
+      console.error(`${format.toUpperCase()} download error:`, err);
+      setError(`Failed to download ${format.toUpperCase()} report.`);
     } finally {
-      setDownloading(false);
+      if (format === 'pdf') setDownloading(false);
+      else setExporting('');
     }
   };
+
+  const handleDownloadPdf = (reportId, reportTitle) => handleDownload(reportId, reportTitle, 'pdf');
 
   return (
     <div className="container py-4">
@@ -297,23 +317,64 @@ export default function ReportsPage() {
                       </span>
                     </div>
 
-                    <button
-                      className="btn btn-outline-danger fw-semibold px-3 shadow-sm"
-                      onClick={() => handleDownloadPdf(activeReport.id, activeReport.title)}
-                      disabled={downloading}
-                    >
-                      {downloading ? (
-                        <>
+                    <div className="d-flex flex-wrap gap-2">
+                      <button
+                        className="btn btn-outline-danger fw-semibold px-3 shadow-sm"
+                        onClick={() => handleDownload(activeReport.id, activeReport.title, 'pdf')}
+                        disabled={Boolean(exporting) || downloading}
+                      >
+                        {downloading ? (
+                          <>
+                            <span className="spinner-border spinner-border-sm me-2" role="status"></span>
+                            Exporting PDF...
+                          </>
+                        ) : (
+                          <>
+                            <i className="bi bi-file-earmark-pdf me-2"></i>
+                            PDF
+                          </>
+                        )}
+                      </button>
+                      <button
+                        className="btn btn-outline-success fw-semibold px-3 shadow-sm"
+                        onClick={() => handleDownload(activeReport.id, activeReport.title, 'csv')}
+                        disabled={Boolean(exporting) || downloading}
+                        title="Download every markdown table as CSV"
+                      >
+                        {exporting === 'csv' ? (
                           <span className="spinner-border spinner-border-sm me-2" role="status"></span>
-                          Exporting PDF...
-                        </>
-                      ) : (
-                        <>
-                          <i className="bi bi-file-earmark-pdf me-2"></i>
-                          Download Vector PDF
-                        </>
-                      )}
-                    </button>
+                        ) : (
+                          <i className="bi bi-filetype-csv me-2"></i>
+                        )}
+                        CSV
+                      </button>
+                      <button
+                        className="btn btn-outline-primary fw-semibold px-3 shadow-sm"
+                        onClick={() => handleDownload(activeReport.id, activeReport.title, 'excel')}
+                        disabled={Boolean(exporting) || downloading}
+                        title="Download every markdown table as a worksheet"
+                      >
+                        {exporting === 'excel' ? (
+                          <span className="spinner-border spinner-border-sm me-2" role="status"></span>
+                        ) : (
+                          <i className="bi bi-file-earmark-excel me-2"></i>
+                        )}
+                        Excel
+                      </button>
+                      <button
+                        className="btn btn-outline-secondary fw-semibold px-3 shadow-sm"
+                        onClick={() => handleDownload(activeReport.id, activeReport.title, 'markdown')}
+                        disabled={Boolean(exporting) || downloading}
+                        title="Download the full report as Markdown"
+                      >
+                        {exporting === 'markdown' ? (
+                          <span className="spinner-border spinner-border-sm me-2" role="status"></span>
+                        ) : (
+                          <i className="bi bi-filetype-md me-2"></i>
+                        )}
+                        Markdown
+                      </button>
+                    </div>
                   </div>
 
                   <div className="card-body p-4">

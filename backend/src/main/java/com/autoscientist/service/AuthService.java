@@ -29,13 +29,18 @@ public class AuthService {
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail())) {
+        String rawEmail = request.getEmail() != null ? request.getEmail().trim() : "";
+        String normalizedEmail = rawEmail.toLowerCase();
+
+        if (userRepository.existsByEmail(request.getEmail()) ||
+                (!rawEmail.isEmpty() && userRepository.existsByEmail(rawEmail)) ||
+                (!normalizedEmail.isEmpty() && userRepository.existsByEmailIgnoreCase(normalizedEmail))) {
             throw new BadRequestException("Email is already registered: " + request.getEmail());
         }
 
         User user = User.builder()
                 .name(request.getName().trim())
-                .email(request.getEmail().trim().toLowerCase())
+                .email(normalizedEmail)
                 .passwordHash(passwordEncoder.encode(request.getPassword()))
                 .role("ROLE_USER")
                 .build();
@@ -52,9 +57,12 @@ public class AuthService {
     }
 
     public AuthResponse login(LoginRequest request) {
+        String rawEmail = request.getEmail() != null ? request.getEmail().trim() : "";
+        String normalizedEmail = rawEmail.toLowerCase();
+
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(
-                        request.getEmail().trim().toLowerCase(),
+                        normalizedEmail,
                         request.getPassword()
                 )
         );
@@ -63,6 +71,8 @@ public class AuthService {
         String token = jwtUtils.generateJwtToken(authentication);
 
         User user = userRepository.findByEmail(request.getEmail().trim().toLowerCase())
+                .or(() -> userRepository.findByEmailIgnoreCase(normalizedEmail))
+                .or(() -> userRepository.findByEmail(rawEmail))
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         return AuthResponse.builder()
@@ -74,14 +84,20 @@ public class AuthService {
 
     @Transactional(readOnly = true)
     public UserDto getCurrentUser(String email) {
+        String normalized = email != null ? email.trim().toLowerCase() : "";
         User user = userRepository.findByEmail(email)
+                .or(() -> userRepository.findByEmailIgnoreCase(normalized))
+                .or(() -> userRepository.findByEmail(normalized))
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + email));
         return mapToDto(user);
     }
 
     @Transactional(readOnly = true)
     public User getCurrentUserEntity(String email) {
+        String normalized = email != null ? email.trim().toLowerCase() : "";
         return userRepository.findByEmail(email)
+                .or(() -> userRepository.findByEmailIgnoreCase(normalized))
+                .or(() -> userRepository.findByEmail(normalized))
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + email));
     }
 

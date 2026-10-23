@@ -44,6 +44,16 @@ spring:
 
 
 
+  # Flyway is disabled by default: dev/test use H2 create-drop owned by Hibernate.
+
+  # The mysql profile below enables versioned migrations (classpath:db/migration).
+
+  flyway:
+
+    enabled: false
+
+
+
 app:
 
   jwt:
@@ -70,13 +80,23 @@ spring:
 
   datasource:
 
-    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/autoscientist_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&createDatabaseIfNotExist=true}
+    # No credential defaults on purpose: staging/production must supply
+    # SPRING_DATASOURCE_URL / _USERNAME / _PASSWORD (e.g. via backend/.env —
+    # see scripts/run_backend.sh, which exports .env before starting).
+    # Startup fails fast if any of the three is missing.
 
-    username: ${SPRING_DATASOURCE_USERNAME:root}
+    url: ${SPRING_DATASOURCE_URL}
 
-    password: ${SPRING_DATASOURCE_PASSWORD:root}
+    username: ${SPRING_DATASOURCE_USERNAME}
+
+    password: ${SPRING_DATASOURCE_PASSWORD}
 
     driver-class-name: com.mysql.cj.jdbc.Driver
+
+  # No default here on purpose: staging/production must supply JWT_SECRET
+  # (base64, >= 64 bytes decoded, e.g. `openssl rand -base64 64 | tr -d '\n'`).
+  # Startup fails fast if it is missing; the dev-only fallback lives in the
+  # default profile above and must never be used outside local development.
 
   jpa:
 
@@ -86,40 +106,53 @@ spring:
 
     database-platform: org.hibernate.dialect.MySQLDialect
 
+  flyway:
+
+    enabled: ${SPRING_FLYWAY_ENABLED:true}
+
+    # Databases that predate Flyway are baselined at V1; only the additive
+    # V2 delta is applied to them. Fresh databases run V1 + V2.
+
+    baseline-on-migrate: true
+
+    baseline-version: 1
+
+    locations: classpath:db/migration
+
+    validate-on-migrate: true
+
+    connect-retries: 10
+
+
+
+app:
+
+  jwt:
+
+    # Required, no fallback: startup fails fast when JWT_SECRET is unset.
+
+    secret: ${JWT_SECRET}
+
 
 
 ---
-
 spring:
-
   config:
-
     activate:
-
       on-profile: dev
-
   datasource:
-
-    url: jdbc:h2:mem:autoscientist_dev;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL
-
+    # Persistent file-backed H2 for local development: preserves accounts, datasets, and models across restarts.
+    # Stored deterministically at backend/data/h2/autoscientist_dev.mv.db.
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:file:./data/h2/autoscientist_dev;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL}
     driver-class-name: org.h2.Driver
-
     username: sa
-
     password:
-
   jpa:
-
     hibernate:
-
-      ddl-auto: create-drop
-
+      # Use update to retain existing tables and data across restarts, creating missing structures non-destructively.
+      ddl-auto: update
     database-platform: org.hibernate.dialect.H2Dialect
-
   h2:
-
     console:
-
       enabled: true
-
       path: /h2-console

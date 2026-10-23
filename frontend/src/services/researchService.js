@@ -44,4 +44,9 @@ export const researchService = {
     const res = await api.get(`/experiments/${id}`);
     return res.data;
   },
+
+  async getExperimentComparison(experimentId) {
+    const res = await api.get(`/experiments/${experimentId}/comparison`);
+    return res.data;
+  },
 };

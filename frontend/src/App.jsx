@@ -1,9 +1,11 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { WorkflowProvider } from './context/WorkflowContext';
 import Navbar from './components/Navbar';
+import Sidebar from './components/Sidebar';
 import ProtectedRoute from './components/ProtectedRoute';
+import RequireDatasetRoute from './components/RequireDatasetRoute';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
@@ -18,17 +20,24 @@ import AskDatasetPage from './pages/AskDatasetPage';
 import FindingsPage from './pages/FindingsPage';
 import ExperimentsPage from './pages/ExperimentsPage';
 import ReportsPage from './pages/ReportsPage';
+import LandingPage from './pages/LandingPage';
 
-function App() {
+function AppFrame() {
+  const { isAuthenticated } = useAuth();
+  const location = useLocation();
+  const publicRoutes = ['/', '/home', '/login', '/register'];
+  const showSidebar = isAuthenticated && !publicRoutes.includes(location.pathname);
+
   return (
-    <Router>
-      <AuthProvider>
-        <WorkflowProvider>
-          <div className="d-flex flex-column min-vh-100">
-            <Navbar />
-            <main className="flex-grow-1">
-              <Routes>
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
+    <div className="d-flex flex-column min-vh-100">
+      <Navbar />
+      <div className="d-flex flex-grow-1 align-items-stretch">
+        {showSidebar && <Sidebar />}
+        <main className="flex-grow-1 min-w-0 w-100">
+          <Routes>
+                {/* Public homepage */}
+                <Route path="/" element={<LandingPage />} />
+                <Route path="/home" element={<Navigate to="/" replace />} />
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/register" element={<RegisterPage />} />
 
@@ -57,7 +66,9 @@ function App() {
                   path="/datasets/:id"
                   element={
                     <ProtectedRoute>
-                      <DatasetDetailPage />
+                      <RequireDatasetRoute>
+                        <DatasetDetailPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -65,7 +76,9 @@ function App() {
                   path="/datasets/:id/overview"
                   element={
                     <ProtectedRoute>
-                      <DatasetDetailPage />
+                      <RequireDatasetRoute>
+                        <DatasetDetailPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -73,7 +86,9 @@ function App() {
                   path="/datasets/:id/quality"
                   element={
                     <ProtectedRoute>
-                      <DatasetDetailPage />
+                      <RequireDatasetRoute>
+                        <DatasetDetailPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -81,7 +96,9 @@ function App() {
                   path="/datasets/:id/eda"
                   element={
                     <ProtectedRoute>
-                      <DatasetDetailPage />
+                      <RequireDatasetRoute>
+                        <DatasetDetailPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -91,7 +108,9 @@ function App() {
                   path="/associations"
                   element={
                     <ProtectedRoute>
-                      <AssociationsPage />
+                      <RequireDatasetRoute>
+                        <AssociationsPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -99,7 +118,9 @@ function App() {
                   path="/datasets/:id/associations"
                   element={
                     <ProtectedRoute>
-                      <AssociationsPage />
+                      <RequireDatasetRoute>
+                        <AssociationsPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -109,7 +130,9 @@ function App() {
                   path="/research"
                   element={
                     <ProtectedRoute>
-                      <ResearchWorkflowPage />
+                      <RequireDatasetRoute>
+                        <ResearchWorkflowPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -117,7 +140,9 @@ function App() {
                   path="/hypotheses"
                   element={
                     <ProtectedRoute>
-                      <ResearchWorkflowPage />
+                      <RequireDatasetRoute>
+                        <ResearchWorkflowPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -125,7 +150,9 @@ function App() {
                   path="/statistics"
                   element={
                     <ProtectedRoute>
-                      <ResearchWorkflowPage />
+                      <RequireDatasetRoute>
+                        <ResearchWorkflowPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -133,7 +160,9 @@ function App() {
                   path="/datasets/:id/research"
                   element={
                     <ProtectedRoute>
-                      <ResearchWorkflowPage />
+                      <RequireDatasetRoute>
+                        <ResearchWorkflowPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -141,7 +170,9 @@ function App() {
                   path="/datasets/:id/hypotheses"
                   element={
                     <ProtectedRoute>
-                      <ResearchWorkflowPage />
+                      <RequireDatasetRoute>
+                        <ResearchWorkflowPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -149,7 +180,9 @@ function App() {
                   path="/datasets/:id/statistics"
                   element={
                     <ProtectedRoute>
-                      <ResearchWorkflowPage />
+                      <RequireDatasetRoute>
+                        <ResearchWorkflowPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -159,7 +192,9 @@ function App() {
                   path="/automl"
                   element={
                     <ProtectedRoute>
-                      <AutoMlPage />
+                      <RequireDatasetRoute>
+                        <AutoMlPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -167,7 +202,9 @@ function App() {
                   path="/ml"
                   element={
                     <ProtectedRoute>
-                      <AutoMlPage />
+                      <RequireDatasetRoute>
+                        <AutoMlPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -175,7 +212,9 @@ function App() {
                   path="/datasets/:id/automl"
                   element={
                     <ProtectedRoute>
-                      <AutoMlPage />
+                      <RequireDatasetRoute>
+                        <AutoMlPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -183,7 +222,9 @@ function App() {
                   path="/datasets/:id/ml"
                   element={
                     <ProtectedRoute>
-                      <AutoMlPage />
+                      <RequireDatasetRoute>
+                        <AutoMlPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -193,7 +234,9 @@ function App() {
                   path="/visualizations"
                   element={
                     <ProtectedRoute>
-                      <VisualizationsPage />
+                      <RequireDatasetRoute>
+                        <VisualizationsPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -201,7 +244,9 @@ function App() {
                   path="/datasets/:id/visualizations"
                   element={
                     <ProtectedRoute>
-                      <VisualizationsPage />
+                      <RequireDatasetRoute>
+                        <VisualizationsPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -211,7 +256,9 @@ function App() {
                   path="/xai"
                   element={
                     <ProtectedRoute>
-                      <AutoMlPage />
+                      <RequireDatasetRoute>
+                        <AutoMlPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -219,7 +266,9 @@ function App() {
                   path="/datasets/:id/xai"
                   element={
                     <ProtectedRoute>
-                      <AutoMlPage />
+                      <RequireDatasetRoute>
+                        <AutoMlPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -229,7 +278,9 @@ function App() {
                   path="/findings"
                   element={
                     <ProtectedRoute>
-                      <FindingsPage />
+                      <RequireDatasetRoute>
+                        <FindingsPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -237,7 +288,9 @@ function App() {
                   path="/datasets/:id/findings"
                   element={
                     <ProtectedRoute>
-                      <FindingsPage />
+                      <RequireDatasetRoute>
+                        <FindingsPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -247,7 +300,9 @@ function App() {
                   path="/reports"
                   element={
                     <ProtectedRoute>
-                      <ReportsPage />
+                      <RequireDatasetRoute>
+                        <ReportsPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -255,7 +310,9 @@ function App() {
                   path="/datasets/:id/report"
                   element={
                     <ProtectedRoute>
-                      <ReportsPage />
+                      <RequireDatasetRoute>
+                        <ReportsPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -263,7 +320,9 @@ function App() {
                   path="/datasets/:id/reports"
                   element={
                     <ProtectedRoute>
-                      <ReportsPage />
+                      <RequireDatasetRoute>
+                        <ReportsPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -273,7 +332,9 @@ function App() {
                   path="/drift"
                   element={
                     <ProtectedRoute>
-                      <DriftPage />
+                      <RequireDatasetRoute>
+                        <DriftPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -281,7 +342,9 @@ function App() {
                   path="/ask"
                   element={
                     <ProtectedRoute>
-                      <AskDatasetPage />
+                      <RequireDatasetRoute>
+                        <AskDatasetPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -289,7 +352,9 @@ function App() {
                   path="/datasets/:id/ask"
                   element={
                     <ProtectedRoute>
-                      <AskDatasetPage />
+                      <RequireDatasetRoute>
+                        <AskDatasetPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
@@ -297,19 +362,33 @@ function App() {
                   path="/experiments"
                   element={
                     <ProtectedRoute>
-                      <ExperimentsPage />
+                      <RequireDatasetRoute>
+                        <ExperimentsPage />
+                      </RequireDatasetRoute>
                     </ProtectedRoute>
                   }
                 />
 
                 {/* Catch-all redirect */}
-                <Route path="*" element={<Navigate to="/dashboard" replace />} />
-              </Routes>
-            </main>
-            <footer className="bg-white border-top py-3 text-center text-muted small">
-              AutoScientist AI &copy; 2026 &bull; "From Raw Data to Evidence-Based Scientific Discovery."
-            </footer>
-          </div>
+                <Route path="*" element={<Navigate to={isAuthenticated ? "/dashboard" : "/"} replace />} />
+          </Routes>
+        </main>
+      </div>
+      {location.pathname !== '/' && (
+        <footer className="bg-white border-top py-3 text-center text-muted small">
+          AutoScientist AI &copy; 2026 &bull; "From Raw Data to Evidence-Based Scientific Discovery."
+        </footer>
+      )}
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <Router>
+      <AuthProvider>
+        <WorkflowProvider>
+          <AppFrame />
         </WorkflowProvider>
       </AuthProvider>
     </Router>

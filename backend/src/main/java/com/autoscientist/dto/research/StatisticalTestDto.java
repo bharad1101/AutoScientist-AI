@@ -27,5 +27,11 @@ public class StatisticalTestDto {
     private Boolean isStatisticallySignificant;
     private String status;
     private String interpretation;
+    private Double ciLower;
+    private Double ciUpper;
+    private Double ciLevel;
+    private String ciMethod;
+    private String ciTarget;
+    private String ciUnavailableReason;
     private LocalDateTime createdAt;
 }

@@ -22,10 +22,28 @@ public class StatisticalTestEngine {
         private final boolean isSignificant;
         private final String interpretation;
         private final double rankScore;
+        private final Double ciLower;
+        private final Double ciUpper;
+        private final Double ciLevel;
+        private final String ciMethod;
+        private final String ciTarget;
+        private final String ciUnavailableReason;
+        private final Double effectSizeCiLower;
+        private final Double effectSizeCiUpper;
 
         public TestResult(String testType, double statistic, double pValue, double effectSize,
                           String effectSizeType, int sampleSize, Double degreesOfFreedom,
                           boolean isSignificant, String interpretation, double rankScore) {
+            this(testType, statistic, pValue, effectSize, effectSizeType, sampleSize, degreesOfFreedom,
+                    isSignificant, interpretation, rankScore, null, null, null, null, null, null, null, null);
+        }
+
+        public TestResult(String testType, double statistic, double pValue, double effectSize,
+                          String effectSizeType, int sampleSize, Double degreesOfFreedom,
+                          boolean isSignificant, String interpretation, double rankScore,
+                          Double ciLower, Double ciUpper, Double ciLevel, String ciMethod,
+                          String ciTarget, String ciUnavailableReason,
+                          Double effectSizeCiLower, Double effectSizeCiUpper) {
             this.testType = testType;
             this.statistic = statistic;
             this.pValue = pValue;
@@ -36,6 +54,14 @@ public class StatisticalTestEngine {
             this.isSignificant = isSignificant;
             this.interpretation = interpretation;
             this.rankScore = rankScore;
+            this.ciLower = ciLower;
+            this.ciUpper = ciUpper;
+            this.ciLevel = ciLevel;
+            this.ciMethod = ciMethod;
+            this.ciTarget = ciTarget;
+            this.ciUnavailableReason = ciUnavailableReason;
+            this.effectSizeCiLower = effectSizeCiLower;
+            this.effectSizeCiUpper = effectSizeCiUpper;
         }
 
         public String getTestType() { return testType; }
@@ -48,6 +74,14 @@ public class StatisticalTestEngine {
         public boolean isSignificant() { return isSignificant; }
         public String getInterpretation() { return interpretation; }
         public double getRankScore() { return rankScore; }
+        public Double getCiLower() { return ciLower; }
+        public Double getCiUpper() { return ciUpper; }
+        public Double getCiLevel() { return ciLevel; }
+        public String getCiMethod() { return ciMethod; }
+        public String getCiTarget() { return ciTarget; }
+        public String getCiUnavailableReason() { return ciUnavailableReason; }
+        public Double getEffectSizeCiLower() { return effectSizeCiLower; }
+        public Double getEffectSizeCiUpper() { return effectSizeCiUpper; }
     }
 
     /**
@@ -118,6 +152,32 @@ public class StatisticalTestEngine {
         boolean significant = pValue < 0.05;
         double rankScore = Math.abs(r) * (1.0 - pValue) * Math.log10(n + 1);
 
+        // 95% CI for the population correlation via the Fisher z-transform.
+        Double ciLower = null;
+        Double ciUpper = null;
+        String ciMethod = null;
+        String ciTarget = "Pearson r";
+        String ciUnavailableReason = null;
+        if (n > 3 && Math.abs(r) < 1.0) {
+            double z = 0.5 * Math.log((1 + r) / (1 - r));
+            double seZ = 1.0 / Math.sqrt(n - 3);
+            try {
+                TDistribution tDist = new TDistribution(n - 3);
+                double tCrit = tDist.inverseCumulativeProbability(0.975);
+                double zLower = z - tCrit * seZ;
+                double zUpper = z + tCrit * seZ;
+                ciLower = round(Math.tanh(zLower), 4);
+                ciUpper = round(Math.tanh(zUpper), 4);
+                ciMethod = "Fisher z-transform (95% CI)";
+            } catch (Exception e) {
+                ciUnavailableReason = "The Fisher z-transform confidence interval could not be computed for this sample.";
+            }
+        } else if (n <= 3) {
+            ciUnavailableReason = "At least 4 paired observations are required for a confidence interval.";
+        } else {
+            ciUnavailableReason = "A perfect correlation has no finite confidence interval.";
+        }
+
         String magnitude = Math.abs(r) > 0.7 ? "strong" : Math.abs(r) > 0.4 ? "moderate" : "weak";
         String direction = r > 0 ? "positive" : "negative";
         String interpretation = significant
@@ -127,7 +187,8 @@ public class StatisticalTestEngine {
                 var1, var2, r, pValue, n);
 
         return new TestResult("PEARSON", round(r, 4), round(pValue, 4), round(rSquared, 4),
-                "r_squared", n, df, significant, interpretation, round(rankScore, 4));
+                "r_squared", n, df, significant, interpretation, round(rankScore, 4),
+                ciLower, ciUpper, 0.95, ciMethod, ciTarget, ciUnavailableReason, null, null);
     }
 
     /**
@@ -200,6 +261,34 @@ public class StatisticalTestEngine {
         double pooledStd = Math.sqrt(((n1 - 1) * v1 + (n2 - 1) * v2) / (n1 + n2 - 2));
         double cohensD = (pooledStd > 0) ? Math.abs(m1 - m2) / pooledStd : 0.0;
 
+        // 95% CI for the mean difference (group1 - group2) using the Welch df.
+        double seDiff = denom;
+        double meanDiff = m1 - m2;
+        Double ciLower = null;
+        Double ciUpper = null;
+        String ciMethod = null;
+        String ciTarget = "Mean difference (" + group1Name + " − " + group2Name + ")";
+        String ciUnavailableReason = null;
+        try {
+            TDistribution tDist = new TDistribution(df);
+            double tCrit = tDist.inverseCumulativeProbability(0.975);
+            ciLower = round(meanDiff - tCrit * seDiff, 4);
+            ciUpper = round(meanDiff + tCrit * seDiff, 4);
+            ciMethod = "Welch–Satterthwaite (95% CI)";
+        } catch (Exception e) {
+            ciUnavailableReason = "The mean-difference confidence interval could not be computed for this sample.";
+        }
+
+        // Approximate 95% CI for Cohen's d (normal-theory standard error).
+        Double dCiLower = null;
+        Double dCiUpper = null;
+        if (n1 + n2 > 3 && pooledStd > 0) {
+            double seD = Math.sqrt((double) (n1 + n2) / (n1 * n2)
+                    + (cohensD * cohensD) / (2.0 * (n1 + n2 - 2)));
+            dCiLower = round(cohensD - 1.96 * seD, 4);
+            dCiUpper = round(cohensD + 1.96 * seD, 4);
+        }
+
         boolean significant = pValue < 0.05;
         double rankScore = Math.min(3.0, cohensD) * (1.0 - pValue) * Math.log10(sampleSize + 1);
 
@@ -211,7 +300,8 @@ public class StatisticalTestEngine {
                 numVar, group1Name, group2Name, tStat, pValue, df);
 
         return new TestResult("WELCH_T_TEST", round(tStat, 4), round(pValue, 4), round(cohensD, 4),
-                "cohens_d", sampleSize, round(df, 1), significant, interpretation, round(rankScore, 4));
+                "cohens_d", sampleSize, round(df, 1), significant, interpretation, round(rankScore, 4),
+                ciLower, ciUpper, 0.95, ciMethod, ciTarget, ciUnavailableReason, dCiLower, dCiUpper);
     }
 
     /**
@@ -294,7 +384,10 @@ public class StatisticalTestEngine {
                 numVar, catVar, fStat, pValue, totalN);
 
         return new TestResult("ONE_WAY_ANOVA", round(fStat, 4), round(pValue, 4), round(etaSquared, 4),
-                "eta_squared", totalN, (double) dfBetween, significant, interpretation, round(rankScore, 4));
+                "eta_squared", totalN, (double) dfBetween, significant, interpretation, round(rankScore, 4),
+                null, null, 0.95, null, "Group mean difference",
+                "A single confidence interval is not defined for a one-way ANOVA; use the post-hoc pairwise comparisons for interval estimates.",
+                null, null);
     }
 
     /**
@@ -384,7 +477,10 @@ public class StatisticalTestEngine {
                 var1, var2, chiSquare, pValue, df, N);
 
         return new TestResult("CHI_SQUARE", round(chiSquare, 4), round(pValue, 4), round(cramersV, 4),
-                "cramers_v", N, df, significant, interpretation, round(rankScore, 4));
+                "cramers_v", N, df, significant, interpretation, round(rankScore, 4),
+                null, null, 0.95, null, "Association strength (Cramer's V)",
+                "A single confidence interval is not defined for a Chi-Square test of independence; the effect size is reported instead.",
+                null, null);
     }
 
     private boolean isValidNumber(String s) {

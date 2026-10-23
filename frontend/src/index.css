@@ -32,3 +32,148 @@ body {
 .nav-link.active {
   font-weight: 600;
 }
+
+/* ---------------- Landing page ---------------- */
+.landing-hero {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 45%, #1d4ed8 130%);
+}
+
+.landing-terminal {
+  min-height: 220px;
+  line-height: 1.9;
+}
+
+.landing .card {
+  border-radius: 0.85rem;
+}
+
+/* ---------------- Responsive navigation ---------------- */
+@media (max-width: 991.98px) {
+  .navbar-collapse {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    max-height: 75vh;
+    overflow-y: auto;
+  }
+
+  .navbar .nav-link {
+    padding: 0.55rem 0.4rem;
+  }
+}
+
+/* Keep long tables inside cards on narrow screens */
+@media (max-width: 575.98px) {
+  .table th,
+  .table td {
+    white-space: nowrap;
+  }
+}
+
+/* ---------------- Authenticated workbench sidebar ---------------- */
+.app-sidebar {
+  width: 248px;
+  flex: 0 0 248px;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+  background: #ffffff;
+  border-right: 1px solid #e2e8f0;
+  transition: width 0.18s ease, flex-basis 0.18s ease;
+  z-index: 1010;
+}
+
+.app-sidebar.is-collapsed {
+  width: 72px;
+  flex-basis: 72px;
+}
+
+.app-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.9rem 0.9rem 0.6rem;
+}
+
+.app-sidebar-nav {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0.25rem 0.55rem 1rem;
+}
+
+.app-sidebar-group {
+  margin-bottom: 0.9rem;
+}
+
+.app-sidebar-group-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  font-weight: 700;
+  padding: 0.35rem 0.55rem;
+}
+
+.app-sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.5rem 0.65rem;
+  margin-bottom: 0.1rem;
+  border-radius: 0.5rem;
+  color: #475569;
+  text-decoration: none;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  border-left: 3px solid transparent;
+}
+
+.app-sidebar-link:hover {
+  background: #f1f5f9;
+  color: #1d4ed8;
+}
+
+.app-sidebar-link.active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-left-color: #2563eb;
+  font-weight: 600;
+}
+
+.app-sidebar-link.is-disabled {
+  opacity: 0.55;
+  color: #94a3b8;
+  cursor: not-allowed;
+  pointer-events: auto;
+}
+
+.app-sidebar-link.is-disabled:hover {
+  background: transparent;
+  color: #94a3b8;
+}
+
+.app-sidebar-lock-badge {
+  font-size: 0.75rem;
+  margin-left: auto;
+  color: #f59e0b;
+}
+
+.app-sidebar-icon {
+  font-size: 1.05rem;
+  width: 1.35rem;
+  text-align: center;
+  flex: 0 0 1.35rem;
+}
+
+.app-sidebar-footer {
+  border-top: 1px solid #e2e8f0;
+  padding: 0.75rem 0.9rem;
+  overflow: hidden;
+}
+
+@media (max-width: 991.98px) {
+  .app-sidebar {
+    display: none !important;
+  }
+}

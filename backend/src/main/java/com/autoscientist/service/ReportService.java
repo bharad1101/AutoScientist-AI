@@ -32,8 +32,10 @@ public class ReportService {
     private final ExperimentRepository experimentRepository;
     private final ModelRunRepository modelRunRepository;
     private final FindingRepository findingRepository;
+    private final DriftSnapshotRepository driftSnapshotRepository;
     private final ReportGeneratorService reportGeneratorService;
     private final PdfExportService pdfExportService;
+    private final com.autoscientist.analysis.report.ReportExportService reportExportService;
 
     @Transactional
     public ReportDto generateReport(Long datasetId, GenerateReportRequest req, User user) {
@@ -65,16 +67,24 @@ public class ReportService {
 
         List<Finding> findings = findingRepository.findByDatasetOrderByCreatedAtDesc(dataset);
 
+        // Real drift evidence, if a comparison has been run for this dataset.
+        String driftReportJson = driftSnapshotRepository
+                .findFirstByDatasetOrderByCreatedAtDesc(dataset)
+                .map(DriftSnapshot::getReportJson)
+                .orElse(null);
+
         String title = (req != null && req.getCustomTitle() != null && !req.getCustomTitle().isBlank())
                 ? req.getCustomTitle()
                 : (question != null ? "Scientific Discovery Report: " + question.getQuestionText()
                 : "Empirical Discovery Report: " + dataset.getName());
 
         String markdown = reportGeneratorService.generateScientificReportMarkdown(
-                dataset, qualityReport, associations, question, hypotheses, tests, modelRuns, findings);
+                dataset, qualityReport, associations, question, hypotheses, tests, modelRuns, findings, driftReportJson);
 
-        String summary = String.format("Scientific empirical report synthesizing %d variables, %d associations, %d statistical tests, and %d predictive models.",
-                dataset.getColumnCount(), associations.size(), tests.size(), modelRuns.size());
+        String summary = String.format("Scientific empirical report (dataset v%d) synthesizing %d variables, %d associations, %d statistical tests, %d predictive models, and drift status %s.",
+                dataset.getVersion() == null ? 1 : dataset.getVersion(),
+                dataset.getColumnCount(), associations.size(), tests.size(), modelRuns.size(),
+                driftReportJson == null ? "not run" : "reported");
 
         Report report = Report.builder()
                 .dataset(dataset)
@@ -129,6 +139,33 @@ public class ReportService {
         }
 
         return pdfExportService.generatePdfReport(report.getTitle(), report.getMarkdownContent());
+    }
+
+    @Transactional(readOnly = true)
+    public String exportCsv(Long id, User user) {
+        Report report = ownedReport(id, user);
+        return reportExportService.toCsv(report.getMarkdownContent());
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportExcel(Long id, User user) {
+        Report report = ownedReport(id, user);
+        return reportExportService.toExcel(report.getTitle(), report.getMarkdownContent());
+    }
+
+    @Transactional(readOnly = true)
+    public String exportMarkdown(Long id, User user) {
+        Report report = ownedReport(id, user);
+        return report.getMarkdownContent() != null ? report.getMarkdownContent() : "";
+    }
+
+    private Report ownedReport(Long id, User user) {
+        Report report = reportRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Report not found: " + id));
+        if (!report.getUser().getId().equals(user.getId())) {
+            throw new UnauthorizedException("Unauthorized access to report.");
+        }
+        return report;
     }
 
     private ReportDto mapToDto(Report r) {

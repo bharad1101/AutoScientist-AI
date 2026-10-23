@@ -25,4 +25,12 @@ public class RegisterRequest {
     @NotBlank(message = "Password is required")
     @Size(min = 6, max = 100, message = "Password must be at least 6 characters")
     private String password;
+
+    public void setEmail(String email) {
+        this.email = email != null ? email.trim() : null;
+    }
+
+    public void setName(String name) {
+        this.name = name != null ? name.trim() : null;
+    }
 }

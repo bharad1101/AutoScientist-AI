@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { datasetService } from '../services/datasetService';
+import { useAuth } from './AuthContext';
 
 export const WORKFLOW_STAGES = [
   {
@@ -124,6 +125,18 @@ export const WORKFLOW_STAGES = [
 const WorkflowContext = createContext(null);
 
 export const WorkflowProvider = ({ children }) => {
+  let authContext = null;
+  try {
+    authContext = useAuth();
+  } catch (e) {
+    authContext = null;
+  }
+  const isAuthenticated = authContext ? authContext.isAuthenticated : false;
+  const authLoading = authContext ? authContext.loading : false;
+
+  const [userDatasets, setUserDatasets] = useState([]);
+  const [datasetsLoading, setDatasetsLoading] = useState(true);
+
   const [datasetId, setDatasetId] = useState(() => {
     return localStorage.getItem('autoscientist_dataset_id') || null;
   });
@@ -132,8 +145,62 @@ export const WorkflowProvider = ({ children }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  const clearDataset = useCallback(() => {
+    setDatasetId(null);
+    setDataset(null);
+    setWorkflowStatus(null);
+    localStorage.removeItem('autoscientist_dataset_id');
+  }, []);
+
+  const refreshUserDatasets = useCallback(async () => {
+    if (!isAuthenticated) {
+      setUserDatasets([]);
+      setDatasetsLoading(false);
+      return [];
+    }
+    try {
+      setDatasetsLoading(true);
+      const res = await datasetService.listDatasets();
+      const list = Array.isArray(res?.data) ? res.data : [];
+      setUserDatasets(list);
+      if (list.length === 0) {
+        clearDataset();
+      } else {
+        setDatasetId((prevId) => {
+          if (!prevId || !list.some((d) => String(d.id) === String(prevId))) {
+            const nextId = list[0].id;
+            localStorage.setItem('autoscientist_dataset_id', nextId.toString());
+            return nextId;
+          }
+          return prevId;
+        });
+      }
+      return list;
+    } catch (err) {
+      console.error('Failed to load user datasets:', err);
+      setUserDatasets([]);
+      return [];
+    } finally {
+      setDatasetsLoading(false);
+    }
+  }, [isAuthenticated, clearDataset]);
+
+  useEffect(() => {
+    if (!authLoading) {
+      if (isAuthenticated) {
+        refreshUserDatasets();
+      } else {
+        setUserDatasets([]);
+        setDatasetsLoading(false);
+        clearDataset();
+      }
+    }
+  }, [isAuthenticated, authLoading, refreshUserDatasets, clearDataset]);
+
+  const hasDatasets = userDatasets.length > 0;
+
   const fetchWorkflowData = useCallback(async (id) => {
-    if (!id) return;
+    if (!id || !isAuthenticated) return;
     try {
       setLoading(true);
       setError(null);
@@ -149,31 +216,45 @@ export const WorkflowProvider = ({ children }) => {
         setWorkflowStatus(wfRes.data);
       }
     } catch (err) {
-      console.error('Failed to load dataset workflow status:', err);
-      setError('Failed to fetch dataset workflow status.');
+      const status = err?.response?.status;
+      if (status === 404 || status === 401 || status === 403) {
+        // Stale persisted id (dataset deleted or no longer accessible):
+        // forget it instead of leaving the app permanently stuck on an error.
+        clearDataset();
+        setError('The selected dataset is no longer available. Select another dataset to continue.');
+      } else {
+        console.error('Failed to load dataset workflow status:', err);
+        setError('Failed to fetch dataset workflow status.');
+      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated, clearDataset]);
 
   const selectDataset = useCallback((id) => {
     if (!id) return;
     setDatasetId(id);
-    localStorage.setItem('autoscientist_dataset_id', id.toString());
-    fetchWorkflowData(id);
-  }, [fetchWorkflowData]);
+    try {
+      localStorage.setItem('autoscientist_dataset_id', id.toString());
+    } catch {
+      // ignore
+    }
+    if (isAuthenticated) {
+      fetchWorkflowData(id);
+    }
+  }, [isAuthenticated, fetchWorkflowData]);
 
   const refreshWorkflowStatus = useCallback(() => {
-    if (datasetId) {
+    if (datasetId && isAuthenticated) {
       fetchWorkflowData(datasetId);
     }
-  }, [datasetId, fetchWorkflowData]);
+  }, [datasetId, isAuthenticated, fetchWorkflowData]);
 
   useEffect(() => {
-    if (datasetId) {
+    if (datasetId && isAuthenticated && !authLoading) {
       fetchWorkflowData(datasetId);
     }
-  }, [datasetId, fetchWorkflowData]);
+  }, [datasetId, isAuthenticated, authLoading, fetchWorkflowData]);
 
   const isStageCompleted = useCallback((stageKey) => {
     if (!workflowStatus || !workflowStatus.stages) return false;
@@ -357,10 +438,15 @@ export const WorkflowProvider = ({ children }) => {
       value={{
         datasetId,
         dataset,
+        userDatasets,
+        hasDatasets,
+        datasetsLoading,
+        refreshUserDatasets,
         workflowStatus,
         loading,
         error,
         selectDataset,
+        clearDataset,
         refreshWorkflowStatus,
         isStageCompleted,
         getStageStatus,
@@ -378,7 +464,26 @@ export const WorkflowProvider = ({ children }) => {
 export const useWorkflow = () => {
   const context = useContext(WorkflowContext);
   if (!context) {
-    throw new Error('useWorkflow must be used within a WorkflowProvider');
+    return {
+      datasetId: null,
+      dataset: null,
+      userDatasets: [],
+      hasDatasets: false,
+      datasetsLoading: false,
+      refreshUserDatasets: async () => [],
+      workflowStatus: null,
+      loading: false,
+      error: null,
+      selectDataset: () => {},
+      clearDataset: () => {},
+      refreshWorkflowStatus: () => {},
+      isStageCompleted: () => false,
+      getStageStatus: () => null,
+      getPrerequisiteInfo: () => ({ met: true, message: null, prerequisiteStage: null }),
+      getPreviousStage: () => null,
+      getNextStage: () => null,
+      getRecommendedNextStep: () => null,
+    };
   }
   return context;
 };

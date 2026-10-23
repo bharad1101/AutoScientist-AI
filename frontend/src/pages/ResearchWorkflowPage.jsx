@@ -4,6 +4,7 @@ import { researchService } from '../services/researchService';
 import { datasetService } from '../services/datasetService';
 import WorkflowNavigator from '../components/WorkflowNavigator';
 import { useWorkflow } from '../context/WorkflowContext';
+import { analyticColumns } from '../utils/columns';
 
 const ResearchWorkflowPage = () => {
   const { id } = useParams();
@@ -65,13 +66,15 @@ const ResearchWorkflowPage = () => {
             setPredictorVar(qVar1);
             setTargetVar(qVar2);
             setQuestionText(`Is ${qVar1} statistically associated with ${qVar2}?`);
-          } else if (dsRes.data.columns && dsRes.data.columns.length >= 2) {
-            const nonIdCols = dsRes.data.columns.filter((c) => c.dataType !== 'IDENTIFIER');
-            const pCol = nonIdCols.length >= 2 ? nonIdCols[0].columnName : dsRes.data.columns[0].columnName;
-            const tCol = nonIdCols.length >= 2 ? nonIdCols[1].columnName : dsRes.data.columns[1].columnName;
-            setPredictorVar(pCol);
-            setTargetVar(tCol);
-            setQuestionText(`Is ${pCol} statistically associated with ${tCol}?`);
+          } else {
+            const nonIdCols = analyticColumns(dsRes.data.columns);
+            if (nonIdCols.length >= 2) {
+              const pCol = nonIdCols[0].columnName;
+              const tCol = nonIdCols[1].columnName;
+              setPredictorVar(pCol);
+              setTargetVar(tCol);
+              setQuestionText(`Is ${pCol} statistically associated with ${tCol}?`);
+            }
           }
         }
 

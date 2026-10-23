@@ -26,5 +26,16 @@ public class AssociationDto {
     private Boolean isSignificant;
     private String interpretation;
     private Double rankScore;
+    /** Lower bound of the 95% confidence interval for the primary estimate. */
+    private Double ciLower;
+    /** Upper bound of the 95% confidence interval for the primary estimate. */
+    private Double ciUpper;
+    private Double ciLevel;
+    private String ciMethod;
+    private String ciTarget;
+    /** Populated when the test does not define a single confidence interval. */
+    private String ciUnavailableReason;
+    private Double effectSizeCiLower;
+    private Double effectSizeCiUpper;
     private LocalDateTime createdAt;
 }

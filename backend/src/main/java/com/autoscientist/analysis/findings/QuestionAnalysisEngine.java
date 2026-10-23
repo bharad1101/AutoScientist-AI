@@ -47,12 +47,15 @@ public class QuestionAnalysisEngine {
             columnMap.put(col.getColumnName().toLowerCase().replace("_", " "), col);
         }
 
-        // If not explicitly provided, extract from question text
+        // If not explicitly provided, extract from question text.
+        // Identifier columns are never chosen implicitly — they carry no analytic meaning,
+        // so auto-detection works only on non-identifier variables.
         if (predictor == null || target == null) {
             String lowerText = questionText.toLowerCase();
             List<String> matchedColumns = new ArrayList<>();
 
             for (DatasetColumn col : columns) {
+                if ("IDENTIFIER".equals(col.getDataType())) continue;
                 String cName = col.getColumnName().toLowerCase();
                 String cNameClean = cName.replace("_", " ");
                 if (lowerText.contains(cName) || lowerText.contains(cNameClean)) {
@@ -69,7 +72,8 @@ public class QuestionAnalysisEngine {
                 if (target == null) target = matchedColumns.get(0);
                 // Choose first informative non-ID column as predictor
                 for (DatasetColumn c : columns) {
-                    if (!c.getColumnName().equals(target) && c.getUniqueCount() > 1 && c.getUniqueCount() < columns.size()) {
+                    if (!c.getColumnName().equals(target) && !"IDENTIFIER".equals(c.getDataType())
+                            && c.getUniqueCount() > 1 && c.getUniqueCount() < columns.size()) {
                         predictor = c.getColumnName();
                         break;
                     }
@@ -85,11 +89,20 @@ public class QuestionAnalysisEngine {
                 if (validCols.size() >= 2) {
                     predictor = validCols.get(0).getColumnName();
                     target = validCols.get(1).getColumnName();
-                } else if (!columns.isEmpty()) {
-                    predictor = columns.get(0).getColumnName();
-                    target = columns.size() > 1 ? columns.get(1).getColumnName() : columns.get(0).getColumnName();
+                } else {
+                    // Not enough analysable variables: leave unresolved rather than
+                    // silently testing an identifier or a constant column. The caller
+                    // surfaces this as a validation error.
+                    predictor = null;
+                    target = null;
                 }
             }
+        }
+
+        if (predictor == null || target == null || predictor.isBlank() || target.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Could not determine the variables for this question. Select a predictor and a target explicitly "
+                    + "(at least two non-identifier, non-constant variables are required).");
         }
 
         // Determine variable types

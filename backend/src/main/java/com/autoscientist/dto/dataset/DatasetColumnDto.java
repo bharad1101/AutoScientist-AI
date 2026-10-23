@@ -29,4 +29,5 @@ public class DatasetColumnDto {
     private Double skewness;
     private String categoriesJson;
     private String distributionJson;
+    private boolean excluded;
 }

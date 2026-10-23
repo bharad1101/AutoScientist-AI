@@ -24,7 +24,11 @@ public class JwtUtils {
     private long jwtExpirationMs;
 
     private SecretKey key() {
-        return Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
+        // Strip all whitespace: env-provided base64 secrets commonly pick up
+        // stray breaks (e.g. `openssl rand -base64 64` wraps at 64 chars and
+        // leaves an interior newline), which would otherwise crash every
+        // auth call. Correct generation: `openssl rand -base64 64 | tr -d '\n'`.
+        return Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret.replaceAll("\\s", "")));
     }
 
     public String generateJwtToken(Authentication authentication) {

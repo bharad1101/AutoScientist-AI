@@ -17,4 +17,6 @@ public class AskDatasetResponseDto {
     private String answerMarkdown;
     private Map<String, Object> empiricalEvidence;
     private double confidence;
+    private ChartDto chart;
+    private List<String> citations;
 }

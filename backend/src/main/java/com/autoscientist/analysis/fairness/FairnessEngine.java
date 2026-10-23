@@ -98,6 +98,10 @@ public class FairnessEngine {
         double[] preds = model.predict(xVal);
         Map<String, Double> groupPositiveRates = new HashMap<>();
         Map<String, Double> groupErrorRates = new HashMap<>();
+        Map<String, Integer> groupSampleSizes = new LinkedHashMap<>();
+        for (Map.Entry<String, List<Integer>> entry : groupSampleIndices.entrySet()) {
+            groupSampleSizes.put(entry.getKey(), entry.getValue().size());
+        }
 
         if ("CLASSIFICATION".equals(split.getProblemType())) {
             for (Map.Entry<String, List<Integer>> entry : groupSampleIndices.entrySet()) {
@@ -155,6 +159,7 @@ public class FairnessEngine {
                 .disparateImpactStatus(status)
                 .groupPositiveRates(groupPositiveRates)
                 .groupErrorRates(groupErrorRates)
+                .groupSampleSizes(groupSampleSizes)
                 .recommendation(recommendation)
                 .build();
     }

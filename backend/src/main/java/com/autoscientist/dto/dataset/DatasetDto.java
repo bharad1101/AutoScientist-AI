@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @Builder
@@ -20,6 +21,11 @@ public class DatasetDto {
     private String datasetType;
     private String description;
     private Double qualityScore;
+    private String sourceFormat;
+    private String sheetName;
+    private Integer version;
+    private Long parentDatasetId;
+    private List<String> excludedColumns;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

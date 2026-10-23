@@ -72,4 +72,40 @@ public class ReportController {
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(pdfBytes);
     }
+
+    @GetMapping("/reports/{id}/export/csv")
+    public ResponseEntity<byte[]> exportCsv(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User user = authService.getCurrentUserEntity(userDetails.getUsername());
+        byte[] csv = reportService.exportCsv(id, user).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"AutoScientist_Report_" + id + ".csv\"")
+                .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+                .body(csv);
+    }
+
+    @GetMapping("/reports/{id}/export/excel")
+    public ResponseEntity<byte[]> exportExcel(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User user = authService.getCurrentUserEntity(userDetails.getUsername());
+        byte[] xlsx = reportService.exportExcel(id, user);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"AutoScientist_Report_" + id + ".xlsx\"")
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(xlsx);
+    }
+
+    @GetMapping("/reports/{id}/export/markdown")
+    public ResponseEntity<byte[]> exportMarkdown(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User user = authService.getCurrentUserEntity(userDetails.getUsername());
+        byte[] md = reportService.exportMarkdown(id, user).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"AutoScientist_Report_" + id + ".md\"")
+                .contentType(MediaType.parseMediaType("text/markdown; charset=UTF-8"))
+                .body(md);
+    }
 }

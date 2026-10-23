@@ -55,6 +55,18 @@ public class DatasetProfiler {
     }
 
     public ProfilingResult profile(InputStream inputStream, Dataset dataset) throws Exception {
+        return profile(inputStream, dataset, Collections.emptySet(), Collections.emptySet());
+    }
+
+    /**
+     * @param forceIdentifier    column names the user explicitly wants treated as identifiers
+     * @param forceNonIdentifier column names the user explicitly wants treated as analysable
+     *                           (overrides an automatic identifier guess — explicit inclusion)
+     */
+    public ProfilingResult profile(InputStream inputStream, Dataset dataset,
+                                   Set<String> forceIdentifier, Set<String> forceNonIdentifier) throws Exception {
+        Set<String> forceId = normalizeOverrideNames(forceIdentifier);
+        Set<String> forceNonId = normalizeOverrideNames(forceNonIdentifier);
         List<String> headers;
         List<List<String>> rows = new ArrayList<>();
 
@@ -113,9 +125,19 @@ public class DatasetProfiler {
             String dataType = inference.type;
             double confidence = inference.confidence;
 
-            if (dataType.equals("NUMERIC")) numericCount++;
-            else if (dataType.equals("CATEGORICAL") || dataType.equals("BOOLEAN")) categoricalCount++;
-            else if (dataType.equals("DATE_TIME")) dateTimeCount++;
+            // Explicit user overrides win over the automatic guess.
+            String normalizedCol = normalizeName(colName);
+            if (forceId.contains(normalizedCol)) {
+                dataType = "IDENTIFIER";
+                confidence = 1.0;
+            } else if (forceNonId.contains(normalizedCol) && "IDENTIFIER".equals(dataType)) {
+                dataType = inference.numeric ? "NUMERIC" : "CATEGORICAL";
+                confidence = 0.9;
+            }
+
+            if ("NUMERIC".equals(dataType)) numericCount++;
+            else if ("CATEGORICAL".equals(dataType) || "BOOLEAN".equals(dataType)) categoricalCount++;
+            else if ("DATE_TIME".equals(dataType)) dateTimeCount++;
 
             DatasetColumn column = DatasetColumn.builder()
                     .dataset(dataset)
@@ -128,7 +150,11 @@ public class DatasetProfiler {
                     .uniqueCount(uniqueCount)
                     .build();
 
-            if (dataType.equals("NUMERIC") || (dataType.equals("IDENTIFIER") && inference.numeric)) {
+            if ("IDENTIFIER".equals(dataType)) {
+                // Identifiers carry no analytic summary: mean/median/std of an id column is
+                // meaningless and must never surface in statistics, correlations or reports.
+                // uniqueCount/missing counts are already set on the column above.
+            } else if (dataType.equals("NUMERIC")) {
                 computeNumericStats(column, nonNullValues);
             } else {
                 computeCategoricalStats(column, nonNullValues);
@@ -143,6 +169,15 @@ public class DatasetProfiler {
         return new ProfilingResult(columns, totalRows, totalCols, datasetType);
     }
 
+    private Set<String> normalizeOverrideNames(Set<String> names) {
+        if (names == null || names.isEmpty()) return Collections.emptySet();
+        Set<String> out = new HashSet<>();
+        for (String n : names) {
+            if (n != null && !n.isBlank()) out.add(normalizeName(n));
+        }
+        return out;
+    }
+
     private static class TypeInference {
         String type;
         double confidence;
@@ -155,27 +190,78 @@ public class DatasetProfiler {
         }
     }
 
+    /**
+     * Normalised form: lowercase, runs of non-alphanumeric characters become a single "_",
+     * leading/trailing "_" stripped. "Zip Code" -> "zip_code", "customer-ID" -> "customer_id".
+     */
+    private String normalizeName(String colName) {
+        if (colName == null) return "";
+        String cleaned = colName.trim().toLowerCase().replaceAll("[^a-z0-9]+", "_");
+        cleaned = cleaned.replaceAll("^_+", "").replaceAll("_+$", "");
+        return cleaned;
+    }
+
+    private static final Set<String> EXACT_IDENTIFIER_NAMES = new HashSet<>(Arrays.asList(
+            "id", "ids", "uuid", "guid", "index", "row_id", "row_num", "rowid", "s_no", "sno",
+            "pk", "primary_key", "foreign_key", "key", "unique_key", "entity_key", "record_key",
+            "zip", "zip_code", "zipcode", "postal", "postal_code", "postalcode", "pin", "pin_code", "pincode",
+            "phone", "phone_number", "phonenumber", "telephone", "mobile", "mobile_number", "mobilenumber", "msisdn",
+            "ssn", "social_security_number", "email", "e_mail", "contact_email",
+            "sku", "upc", "isbn", "ean", "barcode", "gtin",
+            "account_number", "account_no", "accountnumber", "invoice_number", "invoice_no", "invoicenumber",
+            "receipt_number", "receipt_no", "order_number", "order_no", "ordernumber",
+            "record_number", "record_no", "recordnumber", "customer_number", "customer_no",
+            "patient_number", "patient_no", "student_number", "student_no", "roll_no", "roll_number",
+            "registration_number", "reg_no", "license_number", "licence_number", "passport_number",
+            "national_id", "tax_id", "taxid", "credit_card", "card_number", "iban", "routing_number",
+            "serial", "serial_number", "serialnumber", "transaction_number", "ticket_number",
+            "claim_number", "policy_number", "member_number", "employee_number", "house_number"
+    ));
+
+    private static final Set<String> ID_TOKENS = new HashSet<>(Arrays.asList(
+            "id", "ids", "no", "num", "number", "uuid", "guid", "code"
+    ));
+
+    private static final Set<String> ENTITY_TOKENS = new HashSet<>(Arrays.asList(
+            "customer", "user", "users", "patient", "students", "student", "account", "order",
+            "transaction", "claim", "record", "invoice", "bill", "ticket", "case", "member",
+            "employee", "staff", "subject", "participant", "booking", "reservation", "shipment",
+            "policy", "contract", "visit", "admission", "receipt", "serial", "roll"
+    ));
+
     private boolean isIdentifierName(String colName) {
-        if (colName == null) return false;
-        String clean = colName.trim().toLowerCase();
-        if (clean.equals("id") || clean.equals("uuid") || clean.equals("guid") || clean.equals("index") || clean.equals("row_id") || clean.equals("row_num")) {
+        if (colName == null || colName.trim().isEmpty()) return false;
+        // CamelCase "customerId"/"orderId" style
+        if (colName.length() > 2 && Character.isUpperCase(colName.charAt(colName.length() - 1))
+                && colName.endsWith("Id")) {
             return true;
         }
-        if (clean.endsWith("_id") || clean.startsWith("id_") || clean.startsWith("id.")) {
+        String normalized = normalizeName(colName);
+        if (normalized.isEmpty()) return false;
+        if (EXACT_IDENTIFIER_NAMES.contains(normalized)) return true;
+        if (normalized.endsWith("_id") || normalized.startsWith("id_") || normalized.equals("id")) {
             return true;
         }
-        if (colName.endsWith("Id") && colName.length() > 2) {
+        String[] tokens = normalized.split("_");
+        String last = tokens[tokens.length - 1];
+        // record-number style: s_no, order_no, invoice_number, row_index
+        if ((last.equals("no") || last.equals("num") || last.equals("number")) && tokens.length >= 2) {
             return true;
         }
-        return clean.contains("customer_id") || clean.contains("customerid")
-                || clean.contains("user_id") || clean.contains("userid")
-                || clean.contains("record_id") || clean.contains("recordid")
-                || clean.contains("transaction_id") || clean.contains("transactionid")
-                || clean.contains("claim_id") || clean.contains("claimid")
-                || clean.contains("patient_id") || clean.contains("patientid")
-                || clean.contains("student_id") || clean.contains("studentid")
-                || clean.contains("account_id") || clean.contains("accountid")
-                || clean.contains("order_id") || clean.contains("orderid");
+        // entity + identifier token pairs: customer_code, patient_key, user_uuid
+        if (tokens.length >= 2 && ID_TOKENS.contains(last) && ENTITY_TOKENS.contains(tokens[0])) {
+            return true;
+        }
+        // legacy broad contains-based matches (kept for backward compatibility)
+        return normalized.contains("customer_id") || normalized.contains("customerid")
+                || normalized.contains("user_id") || normalized.contains("userid")
+                || normalized.contains("record_id") || normalized.contains("recordid")
+                || normalized.contains("transaction_id") || normalized.contains("transactionid")
+                || normalized.contains("claim_id") || normalized.contains("claimid")
+                || normalized.contains("patient_id") || normalized.contains("patientid")
+                || normalized.contains("student_id") || normalized.contains("studentid")
+                || normalized.contains("account_id") || normalized.contains("accountid")
+                || normalized.contains("order_id") || normalized.contains("orderid");
     }
 
     private boolean isAllIntegerOrText(List<String> values) {
@@ -191,6 +277,37 @@ public class DatasetProfiler {
             }
         }
         return true;
+    }
+
+    /**
+     * Value-based identifier detection for columns whose names give no hint:
+     * fully (or near fully) unique, all-integer values that form a strictly
+     * increasing/decreasing sequence (record numbers such as 1001..1060).
+     * Deliberately conservative so genuine measurements are never reclassified.
+     */
+    private boolean looksLikeSequentialRecordNumber(List<String> values, int uniqueCount) {
+        int n = values.size();
+        if (n < 10 || uniqueCount < 10) return false;
+        double distinctRatio = (double) uniqueCount / n;
+        if (distinctRatio < 0.98) return false;
+
+        List<Double> nums = new ArrayList<>();
+        for (String v : values) {
+            try {
+                double d = Double.parseDouble(v);
+                if (d != Math.floor(d)) return false;
+                nums.add(d);
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        }
+        Collections.sort(nums);
+        int steps = 0;
+        for (int i = 1; i < nums.size(); i++) {
+            if (nums.get(i) - nums.get(i - 1) == 1.0) steps++;
+        }
+        double sequentialFraction = (double) steps / (nums.size() - 1);
+        return sequentialFraction >= 0.85;
     }
 
     private TypeInference inferColumnType(String colName, List<String> values, int uniqueCount, int totalRows) {
@@ -225,9 +342,16 @@ public class DatasetProfiler {
         double distinctRatio = (double) uniqueCount / n;
         boolean matchesIdName = isIdentifierName(colName);
 
-        // Detect identifier columns (e.g., id, customer_id, user_id, transaction_id, etc.)
-        if (matchesIdName && (uniqueCount == n || distinctRatio > 0.40 || uniqueCount >= 20 || totalRows < 10) && isAllIntegerOrText(values)) {
+        // Detect identifier columns. Name patterns are a strong signal on their own —
+        // they no longer depend on a uniqueness conjunct that short/low-cardinality
+        // files used to defeat. Values must still be integer-like (or alphanumeric).
+        if (matchesIdName && isAllIntegerOrText(values)) {
             return new TypeInference("IDENTIFIER", 0.99, numRatio >= 0.85);
+        }
+
+        // Name gives no hint, but values are unique, integer and sequential → record number.
+        if (numRatio >= 0.90 && looksLikeSequentialRecordNumber(values, uniqueCount)) {
+            return new TypeInference("IDENTIFIER", 0.90, true);
         }
 
         if (numRatio >= 0.90) {
@@ -279,7 +403,12 @@ public class DatasetProfiler {
                 DateTimeFormatter.ISO_LOCAL_DATE_TIME,
                 DateTimeFormatter.ofPattern("yyyy/MM/dd"),
                 DateTimeFormatter.ofPattern("MM/dd/yyyy"),
-                DateTimeFormatter.ofPattern("dd-MM-yyyy")
+                DateTimeFormatter.ofPattern("dd-MM-yyyy"),
+                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"),
+                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+                DateTimeFormatter.ofPattern("yyyy-MM-dd HH"),
+                DateTimeFormatter.ofPattern("MM/dd/yyyy HH:mm"),
+                DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
         );
         for (DateTimeFormatter fmt : formatters) {
             try {

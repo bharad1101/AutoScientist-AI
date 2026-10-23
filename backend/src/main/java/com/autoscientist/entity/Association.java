@@ -62,6 +62,38 @@ public class Association {
     @Builder.Default
     private Double rankScore = 0.0;
 
+    /** Lower bound of the 95% confidence interval for the test's primary estimate. */
+    @Column(name = "ci_lower")
+    private Double ciLower;
+
+    /** Upper bound of the 95% confidence interval for the test's primary estimate. */
+    @Column(name = "ci_upper")
+    private Double ciUpper;
+
+    /** Confidence level of the interval (0.95). */
+    @Column(name = "ci_level")
+    private Double ciLevel;
+
+    /** How the interval was computed (e.g. "Fisher z-transform (95% CI)"). */
+    @Column(name = "ci_method", length = 120)
+    private String ciMethod;
+
+    /** What the interval describes (e.g. "Pearson r", "Mean difference (a - b)"). */
+    @Column(name = "ci_target", length = 160)
+    private String ciTarget;
+
+    /** Why no interval is available, when the test does not define one. */
+    @Column(name = "ci_unavailable_reason", length = 400)
+    private String ciUnavailableReason;
+
+    /** Lower bound of the approximate 95% CI for the effect size. */
+    @Column(name = "effect_size_ci_lower")
+    private Double effectSizeCiLower;
+
+    /** Upper bound of the approximate 95% CI for the effect size. */
+    @Column(name = "effect_size_ci_upper")
+    private Double effectSizeCiUpper;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

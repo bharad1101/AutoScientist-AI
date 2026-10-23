@@ -36,9 +36,15 @@ public class WorkflowServiceTest {
     @Mock
     private ExperimentRepository experimentRepository;
     @Mock
+    private ExperimentVersionRepository experimentVersionRepository;
+    @Mock
+    private ModelRunRepository modelRunRepository;
+    @Mock
     private FindingRepository findingRepository;
     @Mock
     private ReportRepository reportRepository;
+    @Mock
+    private AnalysisRunRepository analysisRunRepository;
 
     @InjectMocks
     private WorkflowService workflowService;
@@ -56,6 +62,14 @@ public class WorkflowServiceTest {
                 .columnCount(12)
                 .owner(testUser)
                 .build();
+        testDataset.setColumns(java.util.Arrays.asList(
+                com.autoscientist.entity.DatasetColumn.builder()
+                        .columnIndex(0).columnName("age").dataType("NUMERIC").uniqueCount(40).build(),
+                com.autoscientist.entity.DatasetColumn.builder()
+                        .columnIndex(1).columnName("stage").dataType("CATEGORICAL").uniqueCount(4).build(),
+                com.autoscientist.entity.DatasetColumn.builder()
+                        .columnIndex(2).columnName("patient_id").dataType("IDENTIFIER").uniqueCount(500).build()
+        ));
     }
 
     @Test
@@ -68,6 +82,7 @@ public class WorkflowServiceTest {
         when(experimentRepository.findByDatasetOrderByCreatedAtDesc(any(Dataset.class))).thenReturn(Collections.emptyList());
         when(findingRepository.findByDatasetOrderByCreatedAtDesc(any(Dataset.class))).thenReturn(Collections.emptyList());
         when(reportRepository.findByDatasetOrderByCreatedAtDesc(any(Dataset.class))).thenReturn(Collections.emptyList());
+        when(analysisRunRepository.findByDatasetIdOrderByUpdatedAtDesc(any())).thenReturn(Collections.emptyList());
 
         WorkflowStatusDto status = workflowService.getWorkflowStatus(100L, testUser);
 

@@ -63,46 +63,58 @@ public class AssociationEngine {
         }
 
         List<Association> associations = new ArrayList<>();
+        if (columns == null || columns.size() < 2) {
+            return associations;
+        }
         int numCols = columns.size();
 
         for (int i = 0; i < numCols; i++) {
             DatasetColumn colA = columns.get(i);
-            String nameA = colA.getColumnName();
-            String typeA = colA.getDataType();
-            List<String> rawA = colData.get(nameA);
+            String nameA = colA != null ? colA.getColumnName() : null;
+            String typeA = colA != null ? colA.getDataType() : null;
+            List<String> rawA = nameA != null ? colData.get(nameA) : null;
 
             for (int j = i + 1; j < numCols; j++) {
                 DatasetColumn colB = columns.get(j);
-                String nameB = colB.getColumnName();
-                String typeB = colB.getDataType();
-                List<String> rawB = colData.get(nameB);
+                String nameB = colB != null ? colB.getColumnName() : null;
+                String typeB = colB != null ? colB.getDataType() : null;
+                List<String> rawB = nameB != null ? colData.get(nameB) : null;
+
+                if (typeA == null || typeB == null || rawA == null || rawB == null) continue;
 
                 // Skip non-informative ID columns (IDENTIFIER, 100% unique strings, or single constant values)
-                if (typeA.equals("IDENTIFIER") || typeB.equals("IDENTIFIER")) continue;
-                if (colA.getUniqueCount() <= 1 || colB.getUniqueCount() <= 1) continue;
-                if ((typeA.equals("TEXT") && colA.getUniqueCount() > 50) || (typeB.equals("TEXT") && colB.getUniqueCount() > 50)) continue;
+                if ("IDENTIFIER".equals(typeA) || "IDENTIFIER".equals(typeB)) continue;
+                int uA = colA.getUniqueCount() != null ? colA.getUniqueCount() : 0;
+                int uB = colB.getUniqueCount() != null ? colB.getUniqueCount() : 0;
+                if (uA <= 1 || uB <= 1) continue;
+                if (("TEXT".equals(typeA) && uA > 50) || ("TEXT".equals(typeB) && uB > 50)) continue;
 
                 StatisticalTestEngine.TestResult result = null;
 
-                if (typeA.equals("NUMERIC") && typeB.equals("NUMERIC")) {
-                    result = testEngine.computePearsonCorrelation(nameA, nameB, rawA, rawB);
-                } else if (typeA.equals("NUMERIC") && (typeB.equals("CATEGORICAL") || typeB.equals("BOOLEAN"))) {
-                    if (colB.getUniqueCount() == 2) {
-                        result = testEngine.computeWelchTTest(nameA, nameB, rawA, rawB);
-                    } else if (colB.getUniqueCount() > 2 && colB.getUniqueCount() <= 20) {
-                        result = testEngine.computeOneWayAnova(nameA, nameB, rawA, rawB);
+                try {
+                    if ("NUMERIC".equals(typeA) && "NUMERIC".equals(typeB)) {
+                        result = testEngine.computePearsonCorrelation(nameA, nameB, rawA, rawB);
+                    } else if ("NUMERIC".equals(typeA) && ("CATEGORICAL".equals(typeB) || "BOOLEAN".equals(typeB))) {
+                        if (uB == 2) {
+                            result = testEngine.computeWelchTTest(nameA, nameB, rawA, rawB);
+                        } else if (uB > 2 && uB <= 20) {
+                            result = testEngine.computeOneWayAnova(nameA, nameB, rawA, rawB);
+                        }
+                    } else if (("CATEGORICAL".equals(typeA) || "BOOLEAN".equals(typeA)) && "NUMERIC".equals(typeB)) {
+                        if (uA == 2) {
+                            result = testEngine.computeWelchTTest(nameB, nameA, rawB, rawA);
+                        } else if (uA > 2 && uA <= 20) {
+                            result = testEngine.computeOneWayAnova(nameB, nameA, rawB, rawA);
+                        }
+                    } else if (("CATEGORICAL".equals(typeA) || "BOOLEAN".equals(typeA)) &&
+                            ("CATEGORICAL".equals(typeB) || "BOOLEAN".equals(typeB))) {
+                        if (uA <= 25 && uB <= 25) {
+                            result = testEngine.computeChiSquare(nameA, nameB, rawA, rawB);
+                        }
                     }
-                } else if ((typeA.equals("CATEGORICAL") || typeA.equals("BOOLEAN")) && typeB.equals("NUMERIC")) {
-                    if (colA.getUniqueCount() == 2) {
-                        result = testEngine.computeWelchTTest(nameB, nameA, rawB, rawA);
-                    } else if (colA.getUniqueCount() > 2 && colA.getUniqueCount() <= 20) {
-                        result = testEngine.computeOneWayAnova(nameB, nameA, rawB, rawA);
-                    }
-                } else if ((typeA.equals("CATEGORICAL") || typeA.equals("BOOLEAN")) &&
-                        (typeB.equals("CATEGORICAL") || typeB.equals("BOOLEAN"))) {
-                    if (colA.getUniqueCount() <= 25 && colB.getUniqueCount() <= 25) {
-                        result = testEngine.computeChiSquare(nameA, nameB, rawA, rawB);
-                    }
+                } catch (Exception ex) {
+                    // Pathological pair (e.g. math singularity or unexpected string) should not abort remaining pairs
+                    continue;
                 }
 
                 if (result != null && result.getSampleSize() > 0) {
@@ -121,6 +133,14 @@ public class AssociationEngine {
                             .isSignificant(result.isSignificant())
                             .interpretation(result.getInterpretation())
                             .rankScore(result.getRankScore())
+                            .ciLower(result.getCiLower())
+                            .ciUpper(result.getCiUpper())
+                            .ciLevel(result.getCiLevel())
+                            .ciMethod(result.getCiMethod())
+                            .ciTarget(result.getCiTarget())
+                            .ciUnavailableReason(result.getCiUnavailableReason())
+                            .effectSizeCiLower(result.getEffectSizeCiLower())
+                            .effectSizeCiUpper(result.getEffectSizeCiUpper())
                             .build();
 
                     associations.add(assoc);

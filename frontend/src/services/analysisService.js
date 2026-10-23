@@ -29,6 +29,59 @@ export const analysisService = {
     return res.data;
   },
 
+  async getHistograms(datasetId) {
+    const res = await api.get(`/datasets/${datasetId}/eda/histograms`);
+    return res.data;
+  },
+
+  async getScatter(datasetId, xVar, yVar) {
+    const res = await api.get(`/datasets/${datasetId}/eda/scatter`, {
+      params: { xVar, yVar },
+    });
+    return res.data;
+  },
+
+  async getMissingness(datasetId) {
+    const res = await api.get(`/datasets/${datasetId}/eda/missingness`);
+    return res.data;
+  },
+
+  async getCategoricalSummaries(datasetId) {
+    const res = await api.get(`/datasets/${datasetId}/eda/categorical`);
+    return res.data;
+  },
+
+  async getTimeSeries(datasetId, timeVar, valueVar, aggregation = 0) {
+    const res = await api.get(`/datasets/${datasetId}/eda/timeseries`, {
+      params: { timeVar, valueVar, aggregation },
+    });
+    return res.data;
+  },
+
+  async getGroupDistributions(datasetId, numericVar, categoricalVar) {
+    const res = await api.get(`/datasets/${datasetId}/eda/group-distributions`, {
+      params: { numericVar, categoricalVar },
+    });
+    return res.data;
+  },
+
+  async getMissingnessMatrix(datasetId, limit = 200) {
+    const res = await api.get(`/datasets/${datasetId}/eda/missingness-matrix`, {
+      params: { limit },
+    });
+    return res.data;
+  },
+
+  async getEvidenceGraph(datasetId) {
+    const res = await api.get(`/datasets/${datasetId}/evidence`);
+    return res.data;
+  },
+
+  async getReliabilityScorecard(datasetId) {
+    const res = await api.get(`/datasets/${datasetId}/reliability`);
+    return res.data;
+  },
+
   // AutoML, XAI, Fairness & What-If
   async trainAutoMl(datasetId, data) {
     const res = await api.post(`/datasets/${datasetId}/automl/train`, data);
@@ -40,8 +93,20 @@ export const analysisService = {
     return res.data;
   },
 
+  async getWhatIfSchema(datasetId) {
+    const res = await api.get(`/datasets/${datasetId}/automl/whatif/schema`);
+    return res.data;
+  },
+
   async getLatestAutoMl(datasetId) {
     const res = await api.get(`/datasets/${datasetId}/automl/latest`);
+    return res.data;
+  },
+
+  async getFeatureEffect(datasetId, feature) {
+    const res = await api.get(`/datasets/${datasetId}/automl/feature-effect`, {
+      params: feature ? { feature } : {},
+    });
     return res.data;
   },
 
@@ -82,6 +147,27 @@ export const analysisService = {
 
   async downloadReportPdf(reportId) {
     const res = await api.get(`/reports/${reportId}/pdf`, {
+      responseType: 'blob',
+    });
+    return res.data;
+  },
+
+  async downloadReportCsv(reportId) {
+    const res = await api.get(`/reports/${reportId}/export/csv`, {
+      responseType: 'blob',
+    });
+    return res.data;
+  },
+
+  async downloadReportExcel(reportId) {
+    const res = await api.get(`/reports/${reportId}/export/excel`, {
+      responseType: 'blob',
+    });
+    return res.data;
+  },
+
+  async downloadReportMarkdown(reportId) {
+    const res = await api.get(`/reports/${reportId}/export/markdown`, {
       responseType: 'blob',
     });
     return res.data;

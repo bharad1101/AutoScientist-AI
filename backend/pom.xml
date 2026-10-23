@@ -26,6 +26,7 @@
         <jjwt.version>0.12.6</jjwt.version>
         <commons-math3.version>3.6.1</commons-math3.version>
         <commons-csv.version>1.10.0</commons-csv.version>
+        <poi.version>5.2.5</poi.version>
         <openpdf.version>1.3.39</openpdf.version>
     </properties>
 
@@ -64,6 +65,17 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Versioned schema migrations (enabled for the mysql profile; see application.yml) -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+        </dependency>
+
         <!-- Statistics and mathematics -->
         <dependency>
             <groupId>org.apache.commons</groupId>
@@ -76,6 +88,19 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-csv</artifactId>
             <version>${commons-csv.version}</version>
+        </dependency>
+
+        <!-- Excel import (.xls HSSF + .xlsx XSSF) -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi</artifactId>
+            <version>${poi.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>${poi.version}</version>
         </dependency>
 
         <!-- PDF generation -->

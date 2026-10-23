@@ -3,10 +3,12 @@ import { useParams } from 'react-router-dom';
 import { useWorkflow } from '../context/WorkflowContext';
 import { datasetService } from '../services/datasetService';
 import { analysisService } from '../services/analysisService';
+import PrerequisiteAlert from '../components/PrerequisiteAlert';
+import { Bar, Line } from 'react-chartjs-2';
 
 export default function AskDatasetPage() {
   const { id } = useParams();
-  const { activeDatasetId, setActiveDatasetId } = useWorkflow();
+  const { datasetId: activeDatasetId, selectDataset } = useWorkflow();
   const targetId = id || activeDatasetId;
 
   const [datasets, setDatasets] = useState([]);
@@ -36,7 +38,7 @@ export default function AskDatasetPage() {
         const resolvedId = targetId || res.data[0].id;
         setSelectedDatasetId(resolvedId);
         if (targetId && targetId !== activeDatasetId) {
-          setActiveDatasetId(targetId);
+          selectDataset(targetId);
         }
       }
     } catch (err) {
@@ -73,6 +75,8 @@ export default function AskDatasetPage() {
 
   return (
     <div className="container-fluid py-4 px-4">
+      <PrerequisiteAlert stageKey="overview" />
+
       <div className="d-flex justify-content-between align-items-center mb-4">
         <div>
           <h2 className="fw-bold mb-1">
@@ -189,6 +193,83 @@ export default function AskDatasetPage() {
             <div className="bg-light p-4 rounded mb-4" style={{ whiteSpace: 'pre-line' }}>
               {response.answerMarkdown}
             </div>
+
+            {response.chart && Array.isArray(response.chart.labels) && response.chart.labels.length > 0 && (
+              <div className="mb-4">
+                <h6 className="fw-bold mb-3 text-secondary">
+                  <i className="bi bi-bar-chart-line me-2"></i>
+                  {response.chart.title || 'Computed chart'}
+                </h6>
+                <div className="border rounded bg-white p-3" style={{ height: '320px' }}>
+                  {response.chart.type === 'line' ? (
+                    <Line
+                      data={{
+                        labels: response.chart.labels,
+                        datasets: [
+                          {
+                            label: response.chart.title || 'Value',
+                            data: response.chart.values,
+                            borderColor: 'rgb(37, 99, 235)',
+                            backgroundColor: 'rgba(37, 99, 235, 0.15)',
+                            fill: true,
+                            tension: 0.25,
+                            pointRadius: response.chart.labels.length > 80 ? 0 : 2,
+                          },
+                        ],
+                      }}
+                      options={{
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                          x: { title: { display: true, text: response.chart.xLabel || '' } },
+                          y: { title: { display: true, text: response.chart.yLabel || '' } },
+                        },
+                      }}
+                    />
+                  ) : (
+                    <Bar
+                      data={{
+                        labels: response.chart.labels,
+                        datasets: [
+                          {
+                            label: response.chart.title || 'Value',
+                            data: response.chart.values,
+                            backgroundColor: 'rgba(37, 99, 235, 0.7)',
+                            borderColor: 'rgba(37, 99, 235, 1)',
+                            borderWidth: 1,
+                            borderRadius: 3,
+                          },
+                        ],
+                      }}
+                      options={{
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                          x: { title: { display: true, text: response.chart.xLabel || '' } },
+                          y: { title: { display: true, text: response.chart.yLabel || '' } },
+                        },
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {Array.isArray(response.citations) && response.citations.length > 0 && (
+              <div className="mb-3">
+                <h6 className="fw-bold mb-2 text-secondary">
+                  <i className="bi bi-bookmark-check me-2"></i>
+                  Evidence Citations
+                </h6>
+                <ul className="small text-muted mb-0 ps-3">
+                  {response.citations.map((c, i) => (
+                    <li key={i}>{c}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {response.empiricalEvidence && Object.keys(response.empiricalEvidence).length > 0 && (
               <div>

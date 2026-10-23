@@ -15,9 +15,17 @@ if [ -f ".env" ]; then
     set +a
 fi
 
-if [ ! -f "target/classpath.txt" ]; then
+# Ensure persistent local database directory exists
+mkdir -p data/h2
+mkdir -p uploads/datasets
+
+# Regenerate the classpath when it is missing or older than the dependency
+# definition (pom.xml), so dependency changes are picked up on next start.
+CLASSPATH_FILE="target/classpath.txt"
+if [ ! -f "$CLASSPATH_FILE" ] || [ "pom.xml" -nt "$CLASSPATH_FILE" ]; then
     echo "Generating classpath..."
-    ./mvnw dependency:build-classpath -Dmdep.outputFile=target/classpath.txt -q
+    mkdir -p target
+    ./mvnw dependency:build-classpath -Dmdep.outputFile="$CLASSPATH_FILE" -q
 fi
 
-exec java -cp "target/classes:$(cat target/classpath.txt)" com.autoscientist.AutoScientistApplication
+exec java -cp "target/classes:$(cat "$CLASSPATH_FILE")" com.autoscientist.AutoScientistApplication

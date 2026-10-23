@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -10,8 +10,14 @@ const RegisterPage = () => {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const { register } = useAuth();
+  const { register, isAuthenticated, loading } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!loading && isAuthenticated) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [loading, isAuthenticated, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -29,11 +35,18 @@ const RegisterPage = () => {
 
     setSubmitting(true);
     try {
-      await register(name, email, password);
+      await register(name.trim(), email.trim(), password);
       navigate('/dashboard', { replace: true });
     } catch (err) {
       console.error(err);
-      setError(err.response?.data?.message || err.message || 'Registration failed.');
+      if (!err.response) {
+        setError('Unable to connect to AutoScientist server. Please verify the backend is running.');
+      } else if (err.response.status === 400 && err.response.data?.data) {
+        const fieldError = Object.values(err.response.data.data)[0];
+        setError(fieldError || err.response.data?.message || 'Registration failed.');
+      } else {
+        setError(err.response?.data?.message || err.message || 'Registration failed.');
+      }
     } finally {
       setSubmitting(false);
     }

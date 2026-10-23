@@ -16,6 +16,9 @@ import java.util.*;
 @Component
 public class FeatureEngineeringEngine {
 
+    /** Fixed shuffle seed: identical input + identical seed => identical split (reproducible runs). */
+    public static final long RANDOM_SEED = 42L;
+
     public static class DatasetSplit {
         private final double[][] XTrain;
         private final double[] yTrain;
@@ -90,14 +93,17 @@ public class FeatureEngineeringEngine {
             }
         }
 
-        int targetIndex = headers.indexOf(targetColumn);
+        int targetIndex = indexOfIgnoreCase(headers, targetColumn);
         if (targetIndex < 0) {
             throw new IllegalArgumentException("Target column not found in dataset: " + targetColumn);
         }
+        // Canonical header spelling as it exists in the file (case-insensitive lookup above).
+        String resolvedTarget = headers.get(targetIndex);
 
         // Determine problem type
+        final String resolvedTargetFinal = resolvedTarget;
         DatasetColumn targetColMeta = columns.stream()
-                .filter(c -> c.getColumnName().equals(targetColumn))
+                .filter(c -> c.getColumnName().equalsIgnoreCase(resolvedTargetFinal))
                 .findFirst().orElse(null);
 
         String problemType = requestedProblemType;
@@ -112,7 +118,7 @@ public class FeatureEngineeringEngine {
         // Feature columns (excluding target, IDENTIFIER columns, and high-cardinality text)
         List<DatasetColumn> featureColumns = new ArrayList<>();
         for (DatasetColumn col : columns) {
-            if (!col.getColumnName().equals(targetColumn) && col.getUniqueCount() > 1 &&
+            if (!col.getColumnName().equalsIgnoreCase(resolvedTarget) && col.getUniqueCount() > 1 &&
                     !col.getDataType().equals("IDENTIFIER") &&
                     !(col.getDataType().equals("TEXT") && col.getUniqueCount() > 50)) {
                 featureColumns.add(col);
@@ -120,7 +126,7 @@ public class FeatureEngineeringEngine {
         }
 
         // Shuffle rows deterministically with fixed seed
-        Collections.shuffle(allRows, new Random(42));
+        Collections.shuffle(allRows, new Random(RANDOM_SEED));
 
         int totalN = allRows.size();
         int trainN = (int) Math.round(totalN * 0.70);
@@ -236,15 +242,91 @@ public class FeatureEngineeringEngine {
         preprocConfig.put("valSize", valRows.size());
         preprocConfig.put("testSize", testRows.size());
         preprocConfig.put("featureCount", transformedFeatureNames.size());
+        preprocConfig.put("randomSeed", RANDOM_SEED);
+        preprocConfig.put("splitRatio", "70/15/15");
+        preprocConfig.put("resolvedTarget", resolvedTarget);
+
+        // Expose the fitted transformation so downstream consumers (e.g. the what-if
+        // simulator) can encode RAW user inputs exactly the way training did,
+        // instead of treating raw values as already-standardized numbers.
+        List<Double> meanList = new ArrayList<>();
+        List<Double> stdList = new ArrayList<>();
+        for (int j = 0; j < numFeats; j++) {
+            meanList.add(mean[j]);
+            stdList.add(std[j]);
+        }
+        preprocConfig.put("scalerMean", meanList);
+        preprocConfig.put("scalerStd", stdList);
+        preprocConfig.put("rawFeatures", buildRawFeatureSchema(featureColumns, headers, trainRows,
+                numMedians, catModes, oneHotCategories));
 
         return new DatasetSplit(
                 trainData.X, trainData.y,
                 valData.X, valData.y,
                 testData.X, testData.y,
-                transformedFeatureNames, targetColumn,
+                transformedFeatureNames, resolvedTarget,
                 problemType, classMap, reverseClassMap,
                 preprocConfig
         );
+    }
+
+    /**
+     * Describes every raw (untransformed) feature so a user-supplied scenario can be
+     * encoded exactly like the training matrix: imputation, one-hot expansion and
+     * standardisation are all described here.
+     */
+    private List<Map<String, Object>> buildRawFeatureSchema(List<DatasetColumn> featureColumns,
+                                                              List<String> headers,
+                                                              List<List<String>> trainRows,
+                                                              Map<String, Double> numMedians,
+                                                              Map<String, String> catModes,
+                                                              Map<String, List<String>> oneHotCategories) {
+        List<Map<String, Object>> schema = new ArrayList<>();
+        for (DatasetColumn col : featureColumns) {
+            int colIdx = headers.indexOf(col.getColumnName());
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("name", col.getColumnName());
+            if (col.getDataType().equals("NUMERIC")) {
+                double min = Double.MAX_VALUE;
+                double max = -Double.MAX_VALUE;
+                for (List<String> r : trainRows) {
+                    String s = (colIdx >= 0 && colIdx < r.size()) ? r.get(colIdx) : null;
+                    if (isValidNumber(s)) {
+                        double v = Double.parseDouble(s.trim());
+                        min = Math.min(min, v);
+                        max = Math.max(max, v);
+                    }
+                }
+                entry.put("kind", "NUMERIC");
+                entry.put("imputeValue", numMedians.get(col.getColumnName()));
+                entry.put("min", (min == Double.MAX_VALUE) ? null : min);
+                entry.put("max", (max == -Double.MAX_VALUE) ? null : max);
+                entry.put("categories", null);
+                entry.put("transformedNames", List.of(col.getColumnName()));
+            } else {
+                List<String> cats = oneHotCategories.get(col.getColumnName());
+                List<String> transformed = new ArrayList<>();
+                if (cats != null) {
+                    for (String c : cats) transformed.add(col.getColumnName() + "_" + c);
+                }
+                entry.put("kind", "CATEGORICAL");
+                entry.put("imputeValue", catModes.get(col.getColumnName()));
+                entry.put("min", null);
+                entry.put("max", null);
+                entry.put("categories", cats);
+                entry.put("transformedNames", transformed);
+            }
+            schema.add(entry);
+        }
+        return schema;
+    }
+
+    private int indexOfIgnoreCase(List<String> headers, String name) {
+        if (name == null) return -1;
+        for (int i = 0; i < headers.size(); i++) {
+            if (headers.get(i).equalsIgnoreCase(name.trim())) return i;
+        }
+        return -1;
     }
 
     private static class MatrixData {

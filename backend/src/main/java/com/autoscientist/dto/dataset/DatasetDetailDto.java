@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Data
 @Builder
@@ -21,6 +22,13 @@ public class DatasetDetailDto {
     private Integer columnCount;
     private String datasetType;
     private String description;
+    private String sourceFormat;
+    private String sheetName;
+    private Integer headerRow;
+    private Integer version;
+    private Long parentDatasetId;
+    private List<String> excludedColumns;
+    private Map<String, Object> importOptions;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private List<DatasetColumnDto> columns;

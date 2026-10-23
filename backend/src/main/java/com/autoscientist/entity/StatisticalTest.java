@@ -67,6 +67,26 @@ public class StatisticalTest {
     @Column(nullable = false, columnDefinition = "LONGTEXT")
     private String interpretation;
 
+    /** Lower bound of the 95% confidence interval for the primary estimate. */
+    @Column(name = "ci_lower")
+    private Double ciLower;
+
+    /** Upper bound of the 95% confidence interval for the primary estimate. */
+    @Column(name = "ci_upper")
+    private Double ciUpper;
+
+    @Column(name = "ci_level")
+    private Double ciLevel;
+
+    @Column(name = "ci_method", length = 120)
+    private String ciMethod;
+
+    @Column(name = "ci_target", length = 160)
+    private String ciTarget;
+
+    @Column(name = "ci_unavailable_reason", length = 400)
+    private String ciUnavailableReason;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

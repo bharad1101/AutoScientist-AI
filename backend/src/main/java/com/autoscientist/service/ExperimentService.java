@@ -1,20 +1,27 @@
 package com.autoscientist.service;
 
+import com.autoscientist.dto.research.ExperimentComparisonDto;
 import com.autoscientist.dto.research.ExperimentDto;
 import com.autoscientist.dto.research.ExperimentVersionDto;
 import com.autoscientist.entity.Dataset;
 import com.autoscientist.entity.Experiment;
 import com.autoscientist.entity.ExperimentVersion;
+import com.autoscientist.entity.ModelRun;
 import com.autoscientist.entity.User;
 import com.autoscientist.exception.ResourceNotFoundException;
 import com.autoscientist.exception.UnauthorizedException;
 import com.autoscientist.repository.ExperimentRepository;
 import com.autoscientist.repository.ExperimentVersionRepository;
+import com.autoscientist.repository.ModelRunRepository;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -23,7 +30,9 @@ public class ExperimentService {
 
     private final ExperimentRepository experimentRepository;
     private final ExperimentVersionRepository experimentVersionRepository;
+    private final ModelRunRepository modelRunRepository;
     private final DatasetService datasetService;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Transactional
     public ExperimentDto createExperiment(Long datasetId, String name, String description,
@@ -92,6 +101,71 @@ public class ExperimentService {
         }
 
         return mapToDto(exp);
+    }
+
+    /**
+     * Aligned version comparison: every training snapshot with its persisted
+     * models, seeds, dataset version and metrics — the data behind the
+     * experiment-history comparison view.
+     */
+    @Transactional(readOnly = true)
+    public ExperimentComparisonDto compareExperiment(Long id, User user) {
+        Experiment exp = experimentRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Experiment not found: " + id));
+        if (!exp.getUser().getId().equals(user.getId())) {
+            throw new UnauthorizedException("Unauthorized access to experiment.");
+        }
+
+        List<ExperimentComparisonDto.VersionRow> rows = experimentVersionRepository
+                .findByExperimentOrderByVersionNumberDesc(exp).stream()
+                .map(v -> {
+                    List<ExperimentComparisonDto.ModelRow> models = modelRunRepository
+                            .findByExperimentVersion(v).stream()
+                            .map(r -> ExperimentComparisonDto.ModelRow.builder()
+                                    .modelRunId(r.getId())
+                                    .modelName(r.getModelName())
+                                    .algorithm(r.getAlgorithm())
+                                    .best(Boolean.TRUE.equals(r.getIsBestModel()))
+                                    .trainMetrics(parseMetrics(r.getTrainMetricsJson()))
+                                    .valMetrics(parseMetrics(r.getValMetricsJson()))
+                                    .testMetrics(parseMetrics(r.getTestMetricsJson()))
+                                    .trainRows(r.getTrainRows())
+                                    .valRows(r.getValRows())
+                                    .testRows(r.getTestRows())
+                                    .build())
+                            .collect(Collectors.toList());
+                    return ExperimentComparisonDto.VersionRow.builder()
+                            .versionId(v.getId())
+                            .versionNumber(v.getVersionNumber())
+                            .bestModelName(v.getBestModelName())
+                            .bestMetricValue(v.getBestMetricValue())
+                            .datasetVersion(v.getDatasetVersion())
+                            .randomSeed(v.getRandomSeed())
+                            .engineVersion(v.getEngineVersion())
+                            .createdAt(v.getCreatedAt())
+                            .models(models)
+                            .build();
+                })
+                .collect(Collectors.toList());
+
+        return ExperimentComparisonDto.builder()
+                .experimentId(exp.getId())
+                .experimentName(exp.getName())
+                .datasetId(exp.getDataset().getId())
+                .datasetName(exp.getDataset().getName())
+                .targetColumn(exp.getTargetColumn())
+                .problemType(exp.getProblemType())
+                .versions(rows)
+                .build();
+    }
+
+    private Map<String, Double> parseMetrics(String json) {
+        if (json == null || json.isBlank()) return Collections.emptyMap();
+        try {
+            return objectMapper.readValue(json, new TypeReference<Map<String, Double>>() {});
+        } catch (Exception e) {
+            return Collections.emptyMap();
+        }
     }
 
     public ExperimentDto mapToDto(Experiment exp) {

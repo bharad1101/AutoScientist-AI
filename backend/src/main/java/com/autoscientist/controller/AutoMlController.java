@@ -3,8 +3,10 @@ package com.autoscientist.controller;
 import com.autoscientist.dto.common.ApiResponse;
 import com.autoscientist.dto.ml.AutoMlResponseDto;
 import com.autoscientist.dto.ml.AutoMlTrainRequest;
+import com.autoscientist.dto.ml.FeatureEffectDto;
 import com.autoscientist.dto.ml.WhatIfRequestDto;
 import com.autoscientist.dto.ml.WhatIfResponseDto;
+import com.autoscientist.dto.ml.WhatIfSchemaDto;
 import com.autoscientist.entity.User;
 import com.autoscientist.service.AuthService;
 import com.autoscientist.service.AutoMlService;
@@ -49,5 +51,24 @@ public class AutoMlController {
         User user = authService.getCurrentUserEntity(userDetails.getUsername());
         WhatIfResponseDto response = autoMlService.predictWhatIf(id, request, user);
         return ResponseEntity.ok(ApiResponse.success("What-If simulation calculated.", response));
+    }
+
+    @GetMapping("/whatif/schema")
+    public ResponseEntity<ApiResponse<WhatIfSchemaDto>> getWhatIfSchema(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User user = authService.getCurrentUserEntity(userDetails.getUsername());
+        WhatIfSchemaDto response = autoMlService.getWhatIfSchema(id, user);
+        return ResponseEntity.ok(ApiResponse.success("What-If input schema retrieved.", response));
+    }
+
+    @GetMapping("/feature-effect")
+    public ResponseEntity<ApiResponse<FeatureEffectDto>> getFeatureEffect(
+            @PathVariable Long id,
+            @RequestParam(required = false) String feature,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User user = authService.getCurrentUserEntity(userDetails.getUsername());
+        FeatureEffectDto response = autoMlService.computeFeatureEffect(id, feature, user);
+        return ResponseEntity.ok(ApiResponse.success("Feature effect curve computed.", response));
     }
 }

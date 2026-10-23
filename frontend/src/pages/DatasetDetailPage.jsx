@@ -3,6 +3,11 @@ import { useParams, Link, useLocation, useNavigate } from 'react-router-dom';
 import { datasetService } from '../services/datasetService';
 import { analysisService } from '../services/analysisService';
 import WorkflowNavigator from '../components/WorkflowNavigator';
+import {
+  numericAnalyticColumns,
+  categoricalAnalyticColumns,
+  isInAnalysis,
+} from '../utils/columns';
 
 const DatasetDetailPage = () => {
   const { id } = useParams();
@@ -67,8 +72,8 @@ const DatasetDetailPage = () => {
       if (boxRes && boxRes.data) setBoxPlots(boxRes.data);
 
       if (dataset && dataset.columns) {
-        const numVars = dataset.columns.filter((c) => c.dataType === 'NUMERIC');
-        const catVars = dataset.columns.filter((c) => c.dataType === 'CATEGORICAL' || c.dataType === 'BOOLEAN');
+        const numVars = numericAnalyticColumns(dataset.columns);
+        const catVars = categoricalAnalyticColumns(dataset.columns);
         if (numVars.length > 0 && catVars.length > 0) {
           const defaultNum = numVars[0].columnName;
           const defaultCat = catVars[0].columnName;
@@ -286,6 +291,19 @@ const DatasetDetailPage = () => {
                         <span className="text-muted ms-1 small" title="Type inference confidence">
                           ({Math.round((col.typeConfidence || 1.0) * 100)}%)
                         </span>
+                        {!isInAnalysis(col) && (
+                          <span
+                            className="badge bg-light text-dark border ms-1"
+                            title={
+                              col.excluded
+                                ? 'Excluded from analysis by you'
+                                : 'Identifier column — never used implicitly in statistics, charts or models'
+                            }
+                          >
+                            <i className="bi bi-slash-circle me-1"></i>
+                            not in analysis
+                          </span>
+                        )}
                       </td>
                       <td>
                         <div className="d-flex align-items-center gap-2">
@@ -487,7 +505,7 @@ const DatasetDetailPage = () => {
                         value={selectedNumVar}
                         onChange={(e) => handleGroupedChange(e.target.value, selectedCatVar)}
                       >
-                        {columns.filter((c) => c.dataType === 'NUMERIC').map((c) => (
+                        {numericAnalyticColumns(columns).map((c) => (
                           <option key={c.columnName} value={c.columnName}>{c.columnName}</option>
                         ))}
                       </select>
@@ -499,7 +517,7 @@ const DatasetDetailPage = () => {
                         value={selectedCatVar}
                         onChange={(e) => handleGroupedChange(selectedNumVar, e.target.value)}
                       >
-                        {columns.filter((c) => c.dataType === 'CATEGORICAL' || c.dataType === 'BOOLEAN').map((c) => (
+                        {categoricalAnalyticColumns(columns).map((c) => (
                           <option key={c.columnName} value={c.columnName}>{c.columnName}</option>
                         ))}
                       </select>

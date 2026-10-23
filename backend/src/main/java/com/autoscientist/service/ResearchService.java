@@ -37,6 +37,7 @@ public class ResearchService {
     private final QuestionAnalysisEngine questionAnalysisEngine;
     private final StatisticalTestEngine statisticalTestEngine;
     private final EvidenceEngine evidenceEngine;
+    private final AnalysisRunService analysisRunService;
 
     @Transactional
     public ResearchQuestionDto createResearchQuestion(Long datasetId, ResearchQuestionRequest request, User user) {
@@ -51,12 +52,14 @@ public class ResearchService {
 
         rq = researchQuestionRepository.save(rq);
 
+        // Active columns (user exclusions honoured). Explicit predictor/target values from
+        // the request are used verbatim; auto-extraction never selects an identifier.
         QuestionAnalysisEngine.QuestionAnalysisResult analysis =
                 questionAnalysisEngine.analyzeQuestion(
                         request.getQuestionText(),
                         request.getPredictorVariable(),
                         request.getTargetVariable(),
-                        dataset.getColumns(),
+                        com.autoscientist.util.ColumnSelection.active(dataset),
                         rq
                 );
 
@@ -69,6 +72,13 @@ public class ResearchService {
         rq.setHypotheses(savedHypotheses);
 
         rq = researchQuestionRepository.save(rq);
+
+        analysisRunService.record(dataset, com.autoscientist.analysis.core.AnalysisOperations.RESEARCH_QUESTION,
+                Map.of("test", analysis.getSuggestedTest()),
+                "Question formulated: " + abbreviate(request.getQuestionText(), 200),
+                Map.of("predictor", analysis.getPredictorVariable(), "target", analysis.getTargetVariable()),
+                null, user);
+
         return mapToRqDto(rq);
     }
 
@@ -86,30 +96,44 @@ public class ResearchService {
 
         Dataset dataset = rq.getDataset();
 
+        // Resolve the hypothesis variables case-insensitively against the stored columns so
+        // a case-only mismatch fails with a clear message instead of silently testing nothing.
+        String var1 = resolveColumnName(dataset, hypothesis.getVar1());
+        String var2 = hypothesis.getVar2() != null ? resolveColumnName(dataset, hypothesis.getVar2()) : null;
+
         // Read columns data from dataset CSV
-        Map<String, List<String>> colData = parseColumns(dataset.getStoredFilename(), Arrays.asList(hypothesis.getVar1(), hypothesis.getVar2()));
-        List<String> raw1 = colData.get(hypothesis.getVar1());
-        List<String> raw2 = colData.get(hypothesis.getVar2());
+        Map<String, List<String>> colData = parseColumns(dataset.getStoredFilename(),
+                Arrays.asList(var1, var2 != null ? var2 : var1));
+        List<String> raw1 = colData.get(var1);
+        List<String> raw2 = var2 != null ? colData.get(var2) : null;
+
+        if (raw1 == null || raw1.isEmpty()) {
+            throw new BadRequestException("Variable '" + var1 + "' has no data in this dataset.");
+        }
+        if (var2 != null && (raw2 == null || raw2.isEmpty())) {
+            throw new BadRequestException("Variable '" + var2 + "' has no data in this dataset.");
+        }
 
         StatisticalTestEngine.TestResult result;
         String testType = hypothesis.getSuggestedTest();
 
+        long started = System.currentTimeMillis();
         if (testType.equals("PEARSON")) {
-            result = statisticalTestEngine.computePearsonCorrelation(hypothesis.getVar1(), hypothesis.getVar2(), raw1, raw2);
+            result = statisticalTestEngine.computePearsonCorrelation(var1, var2, raw1, raw2);
         } else if (testType.equals("WELCH_T_TEST")) {
-            result = statisticalTestEngine.computeWelchTTest(hypothesis.getVar1(), hypothesis.getVar2(), raw1, raw2);
+            result = statisticalTestEngine.computeWelchTTest(var1, var2, raw1, raw2);
         } else if (testType.equals("ONE_WAY_ANOVA")) {
-            result = statisticalTestEngine.computeOneWayAnova(hypothesis.getVar1(), hypothesis.getVar2(), raw1, raw2);
+            result = statisticalTestEngine.computeOneWayAnova(var1, var2, raw1, raw2);
         } else {
-            result = statisticalTestEngine.computeChiSquare(hypothesis.getVar1(), hypothesis.getVar2(), raw1, raw2);
+            result = statisticalTestEngine.computeChiSquare(var1, var2, raw1, raw2);
         }
 
         StatisticalTest test = StatisticalTest.builder()
                 .hypothesis(hypothesis)
                 .dataset(dataset)
                 .testType(result.getTestType())
-                .var1(hypothesis.getVar1())
-                .var2(hypothesis.getVar2())
+                .var1(var1)
+                .var2(var2)
                 .statistic(result.getStatistic())
                 .pValue(result.getPValue())
                 .alpha(0.05)
@@ -120,6 +144,12 @@ public class ResearchService {
                 .isStatisticallySignificant(result.isSignificant())
                 .status("COMPLETED")
                 .interpretation(result.getInterpretation())
+                .ciLower(result.getCiLower())
+                .ciUpper(result.getCiUpper())
+                .ciLevel(result.getCiLevel())
+                .ciMethod(result.getCiMethod())
+                .ciTarget(result.getCiTarget())
+                .ciUnavailableReason(result.getCiUnavailableReason())
                 .build();
 
         test = statisticalTestRepository.save(test);
@@ -128,7 +158,35 @@ public class ResearchService {
         Finding finding = evidenceEngine.createFinding(dataset, rq, hypothesis, test);
         finding = findingRepository.save(finding);
 
+        analysisRunService.record(dataset, com.autoscientist.analysis.core.AnalysisOperations.STAT_TEST,
+                Map.of("testType", result.getTestType(), "var1", var1, "var2", var2 == null ? "" : var2),
+                String.format("%s on %s: statistic=%.4f, p=%.4g, n=%d, %s",
+                        result.getTestType(), var1 + (var2 != null ? " vs " + var2 : ""),
+                        result.getStatistic(), result.getPValue(), result.getSampleSize(),
+                        result.isSignificant() ? "significant" : "not significant"),
+                Map.of("pValue", result.getPValue(), "effectSize", result.getEffectSize()),
+                System.currentTimeMillis() - started, user);
+        analysisRunService.record(dataset, com.autoscientist.analysis.core.AnalysisOperations.FINDING,
+                Map.of("testId", String.valueOf(test.getId())),
+                "Finding recorded: " + finding.getTitle(), null, null, user);
+
         return mapToFindingDto(finding);
+    }
+
+    private String resolveColumnName(Dataset dataset, String name) {
+        if (name == null || name.isBlank()) {
+            throw new BadRequestException("A variable name is required to run a statistical test.");
+        }
+        return dataset.getColumns().stream()
+                .filter(c -> c.getColumnName().equalsIgnoreCase(name.trim()))
+                .map(DatasetColumn::getColumnName)
+                .findFirst()
+                .orElseThrow(() -> new BadRequestException("Variable '" + name + "' does not exist in this dataset."));
+    }
+
+    private String abbreviate(String s, int max) {
+        if (s == null) return "";
+        return s.length() <= max ? s : s.substring(0, max - 3) + "...";
     }
 
     @Transactional(readOnly = true)
@@ -237,6 +295,12 @@ public class ResearchService {
                 .isStatisticallySignificant(t.getIsStatisticallySignificant())
                 .status(t.getStatus())
                 .interpretation(t.getInterpretation())
+                .ciLower(t.getCiLower())
+                .ciUpper(t.getCiUpper())
+                .ciLevel(t.getCiLevel())
+                .ciMethod(t.getCiMethod())
+                .ciTarget(t.getCiTarget())
+                .ciUnavailableReason(t.getCiUnavailableReason())
                 .createdAt(t.getCreatedAt())
                 .build();
     }

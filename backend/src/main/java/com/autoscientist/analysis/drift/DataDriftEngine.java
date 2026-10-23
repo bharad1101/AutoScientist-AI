@@ -121,16 +121,22 @@ public class DataDriftEngine {
         psi = Math.round(psi * 10000.0) / 10000.0;
 
         double pVal = 1.0;
+        double ksStat = Double.NaN;
+        double ksP = Double.NaN;
         try {
             double[] refArr = refNums.stream().mapToDouble(Double::doubleValue).toArray();
             double[] tarArr = tarNums.stream().mapToDouble(Double::doubleValue).toArray();
             pVal = TestUtils.tTest(refArr, tarArr);
             pVal = Math.round(pVal * 10000.0) / 10000.0;
+            org.apache.commons.math3.stat.inference.KolmogorovSmirnovTest ks =
+                    new org.apache.commons.math3.stat.inference.KolmogorovSmirnovTest();
+            ksStat = Math.round(ks.kolmogorovSmirnovStatistic(refArr, tarArr) * 10000.0) / 10000.0;
+            ksP = Math.round(ks.kolmogorovSmirnovTest(refArr, tarArr) * 10000.0) / 10000.0;
         } catch (Exception ignored) {}
 
         String status = psi >= 0.25 ? "SIGNIFICANT_DRIFT" : (psi >= 0.10 ? "MODERATE_DRIFT" : "NO_DRIFT");
-        String interp = String.format("PSI = %.4f (Mean shift: %.1f%%, p = %.4f). %s",
-                psi, shiftPct, pVal,
+        String interp = String.format("PSI = %.4f (Mean shift: %.1f%%, t-test p = %.4f, KS D = %.4f, KS p = %.4f). %s",
+                psi, shiftPct, pVal, ksStat, ksP,
                 status.equals("NO_DRIFT") ? "Distribution is statistically consistent with reference."
                         : status.equals("MODERATE_DRIFT") ? "Mild distribution drift detected; examine sample shifts."
                         : "Substantial statistical divergence detected. Feature requires monitoring.");
@@ -141,11 +147,35 @@ public class DataDriftEngine {
                 .psiScore(psi)
                 .driftStatus(status)
                 .pValue(pVal)
+                .ksStatistic(Double.isNaN(ksStat) ? null : ksStat)
+                .ksPValue(Double.isNaN(ksP) ? null : ksP)
                 .referenceMean(Math.round(refMean * 100.0) / 100.0)
                 .targetMean(Math.round(tarMean * 100.0) / 100.0)
                 .meanShiftPct(Math.round(shiftPct * 10.0) / 10.0)
+                .binEdges(toBoxedList(binEdges))
+                .referenceBinProportions(toProportions(refCounts, refNums.size()))
+                .targetBinProportions(toProportions(tarCounts, tarNums.size()))
                 .interpretation(interp)
                 .build();
+    }
+
+    private List<Double> toBoxedList(double[] values) {
+        List<Double> out = new ArrayList<>();
+        for (double v : values) out.add(Math.round(v * 10000.0) / 10000.0);
+        return out;
+    }
+
+    /** Converts bin counts into shares so the two datasets can be plotted together. */
+    private List<Double> toProportions(double[] counts, int total) {
+        List<Double> out = new ArrayList<>();
+        if (total <= 0) {
+            for (int i = 0; i < counts.length; i++) out.add(0.0);
+            return out;
+        }
+        for (double c : counts) {
+            out.add(Math.round((c / total) * 10000.0) / 10000.0);
+        }
+        return out;
     }
 
     private ColumnDriftDto computeCategoricalDrift(String colName, List<String> refRaw, List<String> tarRaw) {

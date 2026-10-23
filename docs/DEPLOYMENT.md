@@ -19,18 +19,27 @@ Create `.env` in `backend/` and `frontend/` by copying the provided templates:
 # Server Port
 PORT=8080
 
-# Database Configuration (MySQL 8.0+)
+# Database Configuration (MySQL 8.0+) — REQUIRED for the mysql profile (no defaults)
 SPRING_DATASOURCE_URL=jdbc:mysql://localhost:3306/autoscientist_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
 SPRING_DATASOURCE_USERNAME=autoscientist_user
-SPRING_DATASOURCE_PASSWORD=YourSecureProductionPassword123!
+SPRING_DATASOURCE_PASSWORD=<your-database-password>
 
-# JWT Security Secret (HS512 Key, at least 64 characters)
-JWT_SECRET=super_secret_production_key_for_autoscientist_ai_jwt_security_token_generation_2026_spring_boot
+# JWT Security Secret — REQUIRED for the mysql profile (no default; startup fails fast).
+# Must be base64 with NO line breaks. Generate a fresh key per environment:
+#   openssl rand -base64 64 | tr -d '\n'
+# Decoded length must be >= 64 bytes for HS512. Never reuse the dev default.
+JWT_SECRET=<generated-base64-secret>
 JWT_EXPIRATION_MS=86400000
 
-# File Upload Storage Directory
-APP_UPLOAD_DIR=./uploads/datasets
+# File Upload Storage Directory (wired to app.upload.dir)
+FILE_UPLOAD_DIR=./uploads/datasets
 ```
+
+> **Never commit real credentials.** `backend/.env` and `frontend/.env` are
+> gitignored. The `dev` profile runs on in-memory H2 and does not need these
+> variables; the `mysql` profile refuses to start if any of
+> `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`,
+> `SPRING_DATASOURCE_PASSWORD` or `JWT_SECRET` is missing.
 
 ### Frontend Configuration (`frontend/.env`)
 ```bash
@@ -47,10 +56,86 @@ mysql -u root -p < database/schema.sql
 ```
 Create the application database user:
 ```sql
-CREATE USER IF NOT EXISTS 'autoscientist_user'@'localhost' IDENTIFIED BY 'YourSecureProductionPassword123!';
+CREATE USER IF NOT EXISTS 'autoscientist_user'@'localhost' IDENTIFIED BY '<your-database-password>';
 GRANT ALL PRIVILEGES ON autoscientist_db.* TO 'autoscientist_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
+
+### 3.1 Schema strategy & migrations (durable)
+
+- The schema is managed by **Flyway** (`backend/src/main/resources/db/migration/`),
+  enabled automatically on the `mysql` profile (`spring.flyway.enabled=true`,
+  `baseline-on-migrate=true`, `baseline-version=1`, `validate-on-migrate=true`).
+  - `dev`/test profiles: H2 in-memory owned by Hibernate `create-drop`; Flyway is
+    disabled and data is intentionally ephemeral.
+  - `mysql` profile: Flyway migrates on startup, then Hibernate validates or
+    updates per `SPRING_JPA_HIBERNATE_DDL_AUTO` (default `update`; set
+    `validate` after the first successful migration for strict checking).
+- Migration files:
+  - `V1__baseline.sql` — full current schema (17 tables) for **fresh** databases.
+  - `V2__provenance_delta.sql` — additive, guarded delta (`datasets.source_stored_filename`,
+    `analysis_runs`, `drift_snapshots` + index, `data_quality_reports.uq_quality_dataset`).
+    Every statement is a no-op when the object already exists, so it is safe on
+    databases that Hibernate has already updated and idempotent under re-runs.
+- **Existing databases that predate Flyway** (no `flyway_schema_history` table):
+  Flyway writes a baseline row at version 1 and applies only V2; V1 is never
+  executed against them. Missing tables/columns from older releases are then
+  added by Hibernate `ddl-auto=update` on the same startup. All statements in
+  both directions are additive — nothing is dropped or rewritten.
+- `database/schema.sql` remains the human-readable reference schema (with
+  MySQL-specific decorations) and is kept in sync with the JPA entities by
+  `SchemaReferenceSyncTest`. `MigrationSqlCompatibilityTest` rejects SQL that
+  H2 accepts but real MySQL rejects (e.g. `CREATE INDEX IF NOT EXISTS`).
+- **Validated migration scenarios** (recorded in `docs/IMPLEMENTATION_PROGRESS.md`):
+  fresh install (V1+V2, Hibernate `validate`), legacy pre-Flyway database
+  (baseline@1 + V2 + `update`, data preserved), restart idempotency.
+- **Rollback / recovery**: migrations are additive-only, so recovery from a
+  failed migration is (1) restore the pre-start backup (see §3.3), (2) `java -jar
+  ... repair` equivalent via a one-off Flyway repair if a migration half-applied
+  (MySQL DDL is non-transactional), then (3) redeploy the previous JAR. There are
+  no down-migrations by design; the additive policy keeps rollback = restore +
+  redeploy-old-jar.
+
+### 3.2 Durable file storage
+
+- Uploaded files are stored under `app.upload.dir` (env `FILE_UPLOAD_DIR`, default
+  `./uploads/datasets`) with UUID filenames on the **local filesystem**.
+- This is **not** multi-instance durable: a container restart with an ephemeral filesystem,
+  or a horizontal scale-out where instances do not share the mount, will lose or fail to see
+  files. For production, mount a persistent volume here (or replace `FileStorageService`
+  with object storage). Dataset metadata in the DB would then reference missing files; the
+  API surfaces this as an explicit "file does not exist" error rather than fabricating data.
+- In-memory caches (`AutoMlService.MODEL_CACHE`, EDA `BoundedCache`) are **process-local**;
+  they are bounded but are not shared across instances and are rebuilt on demand from
+  persisted data.
+
+### 3.3 Backup & recovery
+
+- **Before every deployment or migration**, take a logical backup:
+
+  ```bash
+  mysqldump -u root -p --single-transaction --routines autoscientist_db \
+    > backups/autoscientist_db_$(date +%Y%m%d_%H%M%S).sql
+  tar -czf backups/autoscientist_uploads_$(date +%Y%m%d_%H%M%S).tar.gz uploads/
+  ```
+
+- **Restore** into the same or a new database:
+
+  ```bash
+  mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS autoscientist_db CHARACTER SET utf8mb4;"
+  mysql -u root -p autoscientist_db < backups/autoscientist_db_<timestamp>.sql
+  ```
+
+- Uploaded files live under `FILE_UPLOAD_DIR`; back up and restore that
+  directory together with the database so dataset metadata and files stay in
+  sync. Restores have been verified by importing a dump into an isolated
+  database and starting the application against it (see
+  `docs/IMPLEMENTATION_PROGRESS.md`).
+- Backups may contain user data and password hashes — store them outside the
+  repository with restricted permissions (the provided `backups/` directory is
+  local-only and should be added to `.gitignore` before any commit that could
+  include it).
+
 
 ---
 
@@ -119,4 +204,53 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
+```
+
+---
+
+## 7. CORS Configuration (staging-critical)
+
+The backend only accepts browser requests from origins listed in `app.cors.allowed-origins`
+(env `APP_CORS_ALLOWED_ORIGINS`, comma-separated). The default is the local dev set
+(`http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173`). For a deployed
+frontend you **must** add its origin, or every browser API call will fail CORS:
+
+```bash
+APP_CORS_ALLOWED_ORIGINS=https://autoscientist.yourdomain.com
+```
+
+When the frontend is served from the same origin via the Nginx block above, the origin
+matches automatically and no extra entry is required.
+
+---
+
+## 8. Post-Deploy Verification (smoke test)
+
+There is **no `/actuator/health` endpoint** in this build; use the checks below to confirm
+a healthy deployment.
+
+```bash
+BASE=https://autoscientist.yourdomain.com/api
+
+# 1. Auth is enforced (expect 401, not 500)
+curl -s -o /dev/null -w '%{http_code}\n' $BASE/datasets
+
+# 2. Register a throwaway account and capture the token
+TOKEN=$(curl -s -X POST $BASE/auth/register -H 'Content-Type: application/json' \
+  -d '{"name":"smoke","email":"smoke@yourdomain.com","password":"Pass1234!"}' \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["token"])')
+
+# 3. Authenticated dashboard (expect 200)
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" $BASE/dashboard/stats
+```
+
+A healthy deployment returns `401`, then a JWT, then `200`. If step 1 returns `500`, the
+database or `JWT_SECRET` is misconfigured (the app would normally fail fast at startup —
+check the logs for `Could not resolve placeholder`).
+
+Confirm the schema was migrated exactly once:
+
+```sql
+SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank;
+-- expect: 1 baseline | 1,  2 provenance delta | 1
 ```

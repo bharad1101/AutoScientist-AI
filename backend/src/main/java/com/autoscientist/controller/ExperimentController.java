@@ -41,4 +41,16 @@ public class ExperimentController {
 
         return ResponseEntity.ok(ApiResponse.success("Experiment details retrieved successfully", exp));
     }
+
+    @GetMapping("/{id}/comparison")
+    public ResponseEntity<ApiResponse<com.autoscientist.dto.research.ExperimentComparisonDto>> compareExperiment(
+            @PathVariable("id") Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+
+        User currentUser = authService.getCurrentUserEntity(userDetails.getUsername());
+        com.autoscientist.dto.research.ExperimentComparisonDto comparison =
+                experimentService.compareExperiment(id, currentUser);
+
+        return ResponseEntity.ok(ApiResponse.success("Experiment comparison retrieved successfully", comparison));
+    }
 }

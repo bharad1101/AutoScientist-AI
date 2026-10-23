@@ -15,5 +15,7 @@ public class FairnessDto {
     private String disparateImpactStatus; // PASS, FLAGGED, NOT_APPLICABLE
     private Map<String, Double> groupPositiveRates;
     private Map<String, Double> groupErrorRates;
+    /** Number of validation rows behind each group statistic. */
+    private Map<String, Integer> groupSampleSizes;
     private String recommendation;
 }

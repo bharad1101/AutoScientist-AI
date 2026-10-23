@@ -40,6 +40,18 @@ public class ExperimentVersion {
     @Column(name = "best_metric_value")
     private Double bestMetricValue;
 
+    /** Version of the dataset this version was computed against. */
+    @Column(name = "dataset_version")
+    private Integer datasetVersion;
+
+    /** Random seed used by the run for reproducibility. */
+    @Column(name = "random_seed")
+    private Long randomSeed;
+
+    /** Engine/app version string recorded at execution time. */
+    @Column(name = "engine_version", length = 64)
+    private String engineVersion;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

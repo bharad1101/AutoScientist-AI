@@ -1,5 +1,12 @@
 -- AutoScientist AI Database Schema (MySQL 8.0+)
 -- Database: autoscientist_db
+--
+-- This file is the human-readable REFERENCE schema, kept in sync with the JPA
+-- entities in backend/src/main/java/com/autoscientist/entity/.
+-- The authoritative, versioned migration path is Flyway:
+--   backend/src/main/resources/db/migration/V1__baseline.sql       (full baseline)
+--   backend/src/main/resources/db/migration/V2__provenance_delta.sql (additive delta)
+-- See docs/DEPLOYMENT.md §3.1.
 
 CREATE DATABASE IF NOT EXISTS autoscientist_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE autoscientist_db;
@@ -22,11 +29,19 @@ CREATE TABLE IF NOT EXISTS datasets (
     name VARCHAR(255) NOT NULL,
     original_filename VARCHAR(255) NOT NULL,
     stored_filename VARCHAR(255) NOT NULL,
+    source_stored_filename VARCHAR(255) NULL,
     file_size BIGINT NOT NULL,
     row_count INT NOT NULL DEFAULT 0,
     column_count INT NOT NULL DEFAULT 0,
     dataset_type VARCHAR(50) DEFAULT 'MIXED',
     description TEXT,
+    source_format VARCHAR(16) DEFAULT 'CSV',
+    sheet_name VARCHAR(128) NULL,
+    header_row INT NULL,
+    version INT NOT NULL DEFAULT 1,
+    parent_dataset_id BIGINT NULL,
+    excluded_columns_json TEXT NULL,
+    import_options_json TEXT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_datasets_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -69,7 +84,8 @@ CREATE TABLE IF NOT EXISTS data_quality_reports (
     consistency_score DOUBLE NOT NULL,
     total_issues INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_quality_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE
+    CONSTRAINT fk_quality_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
+    CONSTRAINT uq_quality_dataset UNIQUE (dataset_id)
 ) ENGINE=InnoDB;
 
 -- 5. Data Quality Issues
@@ -103,6 +119,14 @@ CREATE TABLE IF NOT EXISTS associations (
     is_significant BOOLEAN NOT NULL DEFAULT FALSE,
     interpretation TEXT NOT NULL,
     rank_score DOUBLE NOT NULL DEFAULT 0.0,
+    ci_lower DOUBLE NULL,
+    ci_upper DOUBLE NULL,
+    ci_level DOUBLE NULL,
+    ci_method VARCHAR(120) NULL,
+    ci_target VARCHAR(160) NULL,
+    ci_unavailable_reason VARCHAR(400) NULL,
+    effect_size_ci_lower DOUBLE NULL,
+    effect_size_ci_upper DOUBLE NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_associations_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
@@ -157,6 +181,12 @@ CREATE TABLE IF NOT EXISTS statistical_tests (
     is_statistically_significant BOOLEAN NOT NULL DEFAULT FALSE,
     status VARCHAR(50) NOT NULL,
     interpretation LONGTEXT NOT NULL,
+    ci_lower DOUBLE NULL,
+    ci_upper DOUBLE NULL,
+    ci_level DOUBLE NULL,
+    ci_method VARCHAR(120) NULL,
+    ci_target VARCHAR(160) NULL,
+    ci_unavailable_reason VARCHAR(400) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_stat_tests_hypo FOREIGN KEY (hypothesis_id) REFERENCES hypotheses(id) ON DELETE CASCADE,
     CONSTRAINT fk_stat_tests_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE
@@ -188,6 +218,9 @@ CREATE TABLE IF NOT EXISTS experiment_versions (
     models_summary_json LONGTEXT NULL,
     best_model_name VARCHAR(100) NULL,
     best_metric_value DOUBLE NULL,
+    dataset_version INT NULL,
+    random_seed BIGINT NULL,
+    engine_version VARCHAR(64) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_exp_versions_exp FOREIGN KEY (experiment_id) REFERENCES experiments(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
@@ -204,6 +237,12 @@ CREATE TABLE IF NOT EXISTS models (
     test_metrics_json LONGTEXT NULL,
     is_best_model BOOLEAN DEFAULT FALSE,
     fairness_metrics_json LONGTEXT NULL,
+    feature_importances_json LONGTEXT NULL,
+    evaluation_json LONGTEXT NULL,
+    random_seed BIGINT NULL,
+    train_rows INT NULL,
+    val_rows INT NULL,
+    test_rows INT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_models_version FOREIGN KEY (experiment_version_id) REFERENCES experiment_versions(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
@@ -250,4 +289,37 @@ CREATE TABLE IF NOT EXISTS reports (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_reports_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
     CONSTRAINT fk_reports_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- 16. Analysis Runs (provenance of every analysis operation actually executed)
+CREATE TABLE IF NOT EXISTS analysis_runs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    dataset_id BIGINT NOT NULL,
+    user_id BIGINT NULL,
+    operation VARCHAR(64) NOT NULL,
+    params_hash VARCHAR(64) NOT NULL,
+    summary TEXT NULL,
+    payload_json LONGTEXT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'COMPLETED',
+    duration_ms BIGINT NULL,
+    run_count BIGINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_analysis_runs_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
+    CONSTRAINT fk_analysis_runs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT uk_analysis_run_key UNIQUE (dataset_id, operation, params_hash)
+) ENGINE=InnoDB;
+
+-- 17. Drift Snapshots (persisted drift-comparison evidence)
+CREATE TABLE IF NOT EXISTS drift_snapshots (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    dataset_id BIGINT NOT NULL,
+    reference_dataset_id BIGINT NULL,
+    reference_dataset_name VARCHAR(255) NULL,
+    overall_status VARCHAR(32) NULL,
+    overall_drift_index DOUBLE NULL,
+    report_json LONGTEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_drift_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
+    INDEX idx_drift_snapshot_dataset (dataset_id, created_at)
 ) ENGINE=InnoDB;

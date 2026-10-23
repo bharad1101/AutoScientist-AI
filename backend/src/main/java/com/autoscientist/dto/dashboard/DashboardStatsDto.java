@@ -20,4 +20,6 @@ public class DashboardStatsDto {
     private long totalReports;
     private double averageQualityScore;
     private List<TimelineEventDto> recentActivity;
+    /** Daily research-activity histogram (real persisted events only). */
+    private ActivitySeriesDto activity;
 }

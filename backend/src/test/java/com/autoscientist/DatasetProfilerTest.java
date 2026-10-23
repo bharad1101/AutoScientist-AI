@@ -93,4 +93,20 @@ class DatasetProfilerTest {
                 .findFirst().orElseThrow();
         assertEquals("NUMERIC", ageCol.getDataType());
     }
+
+    @Test
+    void testProfilingDetectsSpaceSeparatedTimestamps() throws Exception {
+        String csv = "id,when,score\n" +
+                "1,2024-01-01 01:00,10\n" +
+                "2,2024-01-01 02:00,20\n" +
+                "3,2024-01-02 03:00,30\n";
+
+        Dataset dataset = Dataset.builder().name("Timestamps").build();
+        DatasetProfiler.ProfilingResult result = profiler.profile(
+                new ByteArrayInputStream(csv.getBytes(StandardCharsets.UTF_8)), dataset);
+
+        DatasetColumn when = result.getColumns().stream()
+                .filter(c -> "when".equals(c.getColumnName())).findFirst().orElseThrow();
+        assertEquals("DATE_TIME", when.getDataType());
+    }
 }

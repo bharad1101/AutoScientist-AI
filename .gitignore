@@ -12,6 +12,10 @@ backend/target/
 
 # Local uploads and generated data
 backend/uploads/
+uploads/
+backups/
+backend/data/
+data/
 
 # IDE and macOS files
 .vscode/

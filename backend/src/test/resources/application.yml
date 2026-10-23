@@ -1,0 +1,29 @@
+# ==============================================================================
+# Isolated In-Memory Test Configuration
+#
+# Keeps all automated unit/integration tests running against an isolated
+# in-memory H2 database with create-drop so tests never contaminate or depend
+# on local persistent development databases.
+# ==============================================================================
+spring:
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:autoscientist_test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL}
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+    show-sql: false
+  flyway:
+    enabled: false
+
+app:
+  jwt:
+    secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+    expiration-ms: 3600000
+  upload:
+    dir: ./target/test-uploads

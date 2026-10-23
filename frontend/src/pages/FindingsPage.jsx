@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { datasetService } from '../services/datasetService';
 import { researchService } from '../services/researchService';
+import { analysisService } from '../services/analysisService';
+import EvidenceGraphPanel, { ReliabilityScorecard } from '../components/EvidenceGraphPanel';
 import WorkflowNavigator from '../components/WorkflowNavigator';
 import { useWorkflow } from '../context/WorkflowContext';
 
@@ -9,44 +11,70 @@ const FindingsPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { datasetId: workflowDatasetId, selectDataset } = useWorkflow();
-  const activeId = id || workflowDatasetId;
+  // The dataset ID in the route is authoritative; the workflow-context ID is
+  // only a fallback for the legacy "/findings" route that has no :id param.
+  const activeId = id || workflowDatasetId || '';
 
   const [datasets, setDatasets] = useState([]);
-  const [selectedDatasetId, setSelectedDatasetId] = useState(activeId || '');
   const [dataset, setDataset] = useState(null);
   const [findings, setFindings] = useState([]);
+  const [evidence, setEvidence] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Monotonic token so a slow response for a previously selected dataset can
+  // never overwrite the state of the currently selected one.
+  const requestSeqRef = useRef(0);
 
   const loadData = useCallback(async (targetId) => {
+    const seq = ++requestSeqRef.current;
+
     if (!targetId) {
+      setDataset(null);
+      setFindings([]);
+      setEvidence(null);
       setLoading(false);
       return;
     }
-    try {
-      setLoading(true);
-      setError('');
-      setSelectedDatasetId(targetId);
-      if (selectDataset) selectDataset(targetId);
 
-      const [dsRes, fRes] = await Promise.all([
-        datasetService.getDataset(targetId).catch(() => null),
-        researchService.getDatasetFindings(targetId).catch(() => ({ data: [] })),
-      ]);
+    setLoading(true);
+    setError('');
+    // Drop the previous dataset's data immediately so it is never rendered
+    // against the dataset that is currently loading.
+    setDataset(null);
+    setFindings([]);
+    setEvidence(null);
+    if (selectDataset) selectDataset(targetId);
 
-      if (dsRes && dsRes.data) {
-        setDataset(dsRes.data);
-      }
+    const [dsSettled, fSettled, evSettled] = await Promise.allSettled([
+      datasetService.getDataset(targetId),
+      researchService.getDatasetFindings(targetId),
+      analysisService.getEvidenceGraph(targetId),
+    ]);
 
-      if (fRes && fRes.data) {
-        setFindings(fRes.data);
-      }
-    } catch (err) {
+    // A newer request has been issued since: discard this stale response.
+    if (seq !== requestSeqRef.current) return;
+
+    if (fSettled.status === 'rejected') {
+      const err = fSettled.reason;
       console.error('Failed to load findings:', err);
-      setError(err.response?.data?.message || err.message || 'Failed to load scientific findings.');
-    } finally {
-      setLoading(false);
+      setError(err?.response?.data?.message || err?.message || 'Failed to load scientific findings.');
+      setFindings([]);
+    } else {
+      const body = fSettled.value;
+      const list = Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : [];
+      setFindings(list);
     }
+
+    if (dsSettled.status === 'fulfilled' && dsSettled.value && dsSettled.value.data) {
+      setDataset(dsSettled.value.data);
+    }
+
+    setEvidence(
+      evSettled.status === 'fulfilled' && evSettled.value && evSettled.value.data
+        ? evSettled.value.data
+        : null
+    );
+    setLoading(false);
   }, [selectDataset]);
 
   useEffect(() => {
@@ -56,22 +84,36 @@ const FindingsPage = () => {
       datasetService
         .listDatasets()
         .then((res) => {
-          if (res.data && res.data.length > 0) {
-            loadData(res.data[0].id);
+          const list = Array.isArray(res?.data) ? res.data : [];
+          if (list.length > 0) {
+            // Normalize the legacy no-id route to the canonical URL so the
+            // route ID becomes authoritative from here on.
+            navigate(`/datasets/${list[0].id}/findings`, { replace: true });
           } else {
             setLoading(false);
           }
         })
-        .catch(() => setLoading(false));
+        .catch((err) => {
+          console.error('Failed to list datasets:', err);
+          setError('Failed to load scientific findings.');
+          setLoading(false);
+        });
     }
 
     datasetService
       .listDatasets()
       .then((res) => {
-        if (res.data) setDatasets(res.data);
+        if (Array.isArray(res?.data)) setDatasets(res.data);
       })
       .catch(() => {});
-  }, [activeId, loadData]);
+  }, [activeId, loadData, navigate]);
+
+  // Invalidate any in-flight request when the page unmounts.
+  useEffect(() => {
+    return () => {
+      requestSeqRef.current += 1;
+    };
+  }, []);
 
   const handleDatasetChange = (dsId) => {
     navigate(`/datasets/${dsId}/findings`);
@@ -91,7 +133,7 @@ const FindingsPage = () => {
   };
 
   return (
-    <div className="container py-4">
+    <div className="container py-4 w-100 min-w-0">
       <WorkflowNavigator currentStage="findings">
         <div className="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
           <div>
@@ -114,9 +156,10 @@ const FindingsPage = () => {
             {datasets.length > 1 && (
               <select
                 className="form-select form-select-sm"
-                value={selectedDatasetId}
+                value={activeId}
                 onChange={(e) => handleDatasetChange(e.target.value)}
                 style={{ width: '180px' }}
+                aria-label="Select dataset"
               >
                 {datasets.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -136,7 +179,7 @@ const FindingsPage = () => {
             </div>
             <button
               className="btn btn-sm btn-outline-danger"
-              onClick={() => loadData(selectedDatasetId || activeId)}
+              onClick={() => loadData(activeId)}
             >
               <i className="bi bi-arrow-clockwise me-1"></i> Retry
             </button>
@@ -148,7 +191,21 @@ const FindingsPage = () => {
             <div className="spinner-border text-primary" role="status"></div>
             <p className="text-muted small mt-2">Loading evidence trail...</p>
           </div>
-        ) : findings.length === 0 ? (
+        ) : (
+          <>
+            {evidence && (
+              <>
+                <ReliabilityScorecard reliability={evidence.reliability} />
+                <EvidenceGraphPanel graph={evidence} />
+              </>
+            )}
+          </>
+        )}
+
+        {/* Empty state is only shown when the load succeeded and the API
+            genuinely returned zero findings — never while loading or after an
+            error, so a failed request cannot masquerade as "no findings". */}
+        {!loading && !error && findings.length === 0 && (
           <div className="card text-center py-5 border-dashed bg-white shadow-sm">
             <div className="card-body">
               <i className="bi bi-journal-x display-4 text-muted mb-2 d-block"></i>
@@ -156,14 +213,16 @@ const FindingsPage = () => {
               <p className="text-muted small max-w-md mx-auto mb-3">
                 Findings are synthesized from statistical hypothesis testing decisions or predictive models.
               </p>
-              {selectedDatasetId && (
-                <Link to={`/datasets/${selectedDatasetId}/research`} className="btn btn-primary fw-semibold px-4 py-2">
+              {activeId && (
+                <Link to={`/datasets/${activeId}/research`} className="btn btn-primary fw-semibold px-4 py-2">
                   <i className="bi bi-question-circle me-1"></i> Formulate Research Question
                 </Link>
               )}
             </div>
           </div>
-        ) : (
+        )}
+
+        {!loading && findings.length > 0 && (
           <div className="row g-4">
             {findings.map((f) => (
               <div key={f.id} className="col-12">
