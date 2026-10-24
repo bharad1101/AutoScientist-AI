@@ -23,7 +23,7 @@ Environment actually measured:
 | Backend tests | 26 at audit time → **40 now**, 0 failures/errors, 16 classes |
 | Frontend build | 515.75 kB at audit time → **607.23 kB now** (gzip 183.52 kB), success |
 | Frontend tests | none (`package.json` has no `test` script, no lint script) |
-| MySQL | running on :3306, but `root/root` is **rejected** on this machine (prod profile needs real creds) |
+| MySQL | running on :3306, but `root/root` is **rejected** on this machine (mysql profile needs real creds) |
 
 Test classes at audit time (26 tests): `AuthControllerTest` 3, `AuthServiceTest` 4, `AutoMlEngineTest` 2, `BiomedicalClassificationPipelineTest` 1, `DataDriftAndAskTest` 2, `DataQualityEngineTest` 1, `DatasetProfilerTest` 3, `EndToEndPipelineTest` 1, `QuestionAnalysisEngineTest` 2, `ReportAndPdfTest` 1, `StatisticalTestEngineTest` 5, `WorkflowServiceTest` 1.
 

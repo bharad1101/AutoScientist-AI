@@ -39,13 +39,13 @@ public class SecurityConfig {
 
     @Bean
     public DaoAuthenticationProvider authenticationProvider() {
-        DaoAuthenticationProvider authProvider =
+        DaoAuthenticationProvider provider =
                 new DaoAuthenticationProvider();
 
-        authProvider.setUserDetailsService(userDetailsService);
-        authProvider.setPasswordEncoder(passwordEncoder());
+        provider.setUserDetailsService(userDetailsService);
+        provider.setPasswordEncoder(passwordEncoder());
 
-        return authProvider;
+        return provider;
     }
 
     @Bean
@@ -80,10 +80,13 @@ public class SecurityConfig {
                 )
             )
             .authorizeHttpRequests(auth -> {
-                auth.requestMatchers("/api/auth/**").permitAll();
-                auth.requestMatchers("/error").permitAll();
+                auth.requestMatchers(
+                    "/",
+                    "/api/health",
+                    "/api/auth/**",
+                    "/error"
+                ).permitAll();
 
-                // The H2 console is public only during development.
                 if (environment.acceptsProfiles(Profiles.of("dev"))) {
                     auth.requestMatchers("/h2-console/**").permitAll();
                 }
@@ -101,4 +104,3 @@ public class SecurityConfig {
         return http.build();
     }
 }
-

@@ -1,6 +1,8 @@
 server:
 
-  port: ${SERVER_PORT:8080}
+  # Render supplies $PORT; local dev and Docker default to 8080.
+  # SERVER_PORT takes priority; PORT is the Render-conventional fallback.
+  port: ${SERVER_PORT:${PORT:8080}}
 
   servlet:
 
