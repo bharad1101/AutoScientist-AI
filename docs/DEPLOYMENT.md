@@ -19,6 +19,9 @@ Create `.env` in `backend/` and `frontend/` by copying the provided templates:
 # Server Port
 PORT=8080
 
+# Staging/production must use MySQL. The dev profile is local-only.
+SPRING_PROFILES_ACTIVE=mysql
+
 # Database Configuration (MySQL 8.0+) — REQUIRED for the mysql profile (no defaults)
 SPRING_DATASOURCE_URL=jdbc:mysql://localhost:3306/autoscientist_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
 SPRING_DATASOURCE_USERNAME=autoscientist_user
@@ -36,15 +39,23 @@ FILE_UPLOAD_DIR=./uploads/datasets
 ```
 
 > **Never commit real credentials.** `backend/.env` and `frontend/.env` are
-> gitignored. The `dev` profile runs on in-memory H2 and does not need these
+> gitignored. The `dev` profile runs on local file-backed H2 and does not need these
 > variables; the `mysql` profile refuses to start if any of
 > `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`,
-> `SPRING_DATASOURCE_PASSWORD` or `JWT_SECRET` is missing.
+> `SPRING_DATASOURCE_PASSWORD` or `JWT_SECRET` is missing. The application now
+> defaults to `mysql`, and the Docker image forces `mysql`; `dev` is refused on
+> Render so a deployment cannot silently serve a different H2 account database.
 
 ### Frontend Configuration (`frontend/.env`)
 ```bash
-VITE_API_BASE_URL=http://localhost:8080/api
+# BUILD-TIME value. Set this in the deployment build environment (e.g. Vercel/Render).
+# It must be an absolute HTTPS URL for the deployed backend, ending in /api.
+VITE_API_BASE_URL=https://<your-backend-host>/api
 ```
+
+> Local development does not need this variable: leaving it unset uses `/api`
+> through Vite's dev proxy. Production builds fail fast if the value is missing,
+> relative, non-HTTPS, or points to localhost/loopback.
 
 ---
 
@@ -66,8 +77,9 @@ FLUSH PRIVILEGES;
 - The schema is managed by **Flyway** (`backend/src/main/resources/db/migration/`),
   enabled automatically on the `mysql` profile (`spring.flyway.enabled=true`,
   `baseline-on-migrate=true`, `baseline-version=1`, `validate-on-migrate=true`).
-  - `dev`/test profiles: H2 in-memory owned by Hibernate `create-drop`; Flyway is
-    disabled and data is intentionally ephemeral.
+  - `dev` profile: local file-backed H2 with Hibernate `update`; accounts persist
+    across local restarts. `test` profile: isolated in-memory H2 with `create-drop`.
+    Flyway is disabled for both.
   - `mysql` profile: Flyway migrates on startup, then Hibernate validates or
     updates per `SPRING_JPA_HIBERNATE_DDL_AUTO` (default `update`; set
     `validate` after the first successful migration for strict checking).
@@ -155,9 +167,12 @@ From the repository root:
 ```bash
 cd frontend
 npm install
-npm run build
+VITE_API_BASE_URL=https://<your-backend-host>/api npm run build
 ```
-Static production assets are compiled to `frontend/dist/`.
+Static production assets are compiled to `frontend/dist/`. On Vercel/Render, set
+`VITE_API_BASE_URL` in the project's build environment instead of the shell. A
+build without a valid absolute HTTPS backend URL is rejected before the bundle
+is written.
 
 ---
 
@@ -168,9 +183,13 @@ Using the provided launcher script:
 ```bash
 ./scripts/run_backend.sh
 ```
-Or directly via Java:
+Or directly via Java for production (the `mysql` profile is the default):
 ```bash
-java -jar backend/target/autoscientist-backend-1.0.0-SNAPSHOT.jar
+SPRING_PROFILES_ACTIVE=mysql java -jar backend/target/autoscientist-backend-1.0.0-SNAPSHOT.jar
+```
+For local H2 only:
+```bash
+SPRING_PROFILES_ACTIVE=dev java -jar backend/target/autoscientist-backend-1.0.0-SNAPSHOT.jar
 ```
 
 ### 5.2 Starting Frontend
@@ -226,11 +245,14 @@ matches automatically and no extra entry is required.
 
 ## 8. Post-Deploy Verification (smoke test)
 
-There is **no `/actuator/health` endpoint** in this build; use the checks below to confirm
-a healthy deployment.
+The public health endpoint is `/api/health`. Use the checks below to confirm a
+healthy deployment and the correct database/API wiring.
 
 ```bash
 BASE=https://autoscientist.yourdomain.com/api
+
+# 0. Public health check (expect 200 + status UP)
+curl -s $BASE/health
 
 # 1. Auth is enforced (expect 401, not 500)
 curl -s -o /dev/null -w '%{http_code}\n' $BASE/datasets

@@ -78,14 +78,18 @@ For a Maven-based Spring Boot project:
 
 ```bash
 cd backend
-./mvnw spring-boot:run
+SPRING_PROFILES_ACTIVE=dev ./mvnw spring-boot:run
 ```
 
 If the project uses a system-installed Maven instead of the Maven wrapper, use:
 
 ```bash
-mvn spring-boot:run
+SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run
 ```
+
+The `dev` profile uses local file-backed H2. Production must use
+`SPRING_PROFILES_ACTIVE=mysql` with a real datasource; the application defaults
+to `mysql` and refuses to start in production with an embedded database.
 
 The backend is expected to run at:
 

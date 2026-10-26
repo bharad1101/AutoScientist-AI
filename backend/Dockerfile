@@ -21,6 +21,8 @@ RUN mkdir -p /app/uploads/datasets /app/data/h2 \
 
 USER appuser
 
+ENV SPRING_PROFILES_ACTIVE=mysql
+
 # Render supplies $PORT; we forward it to SERVER_PORT which application.yml reads.
 # If PORT is unset (local docker run), the app defaults to 8080.
 ENV PORT=8080

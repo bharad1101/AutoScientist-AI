@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { validateProductionApiBaseUrl } from '../../config/apiBaseUrl.js';
 
 describe('API client (actual service) — base URL resolution', () => {
   beforeEach(() => {
@@ -32,23 +33,9 @@ describe('API client (actual service) — base URL resolution', () => {
     vi.unstubAllEnvs();
   });
 
-  it('production base URL must NOT be localhost or 127.0.0.1', () => {
-    const validProductionUrls = [
-      'https://autoscientist-ai-backend.onrender.com/api',
-      'https://api.autoscientist.example.com/api',
-      '/api',
-    ];
-    const invalidUrls = [
-      'http://localhost:8080/api',
-      'http://127.0.0.1:8080/api',
-      'http://0.0.0.0:8080/api',
-    ];
-    for (const url of validProductionUrls) {
-      expect(url).not.toMatch(/localhost|127\.0\.0\.1|0\.0\.0\.0/);
-    }
-    for (const url of invalidUrls) {
-      expect(url).toMatch(/localhost|127\.0\.0\.1|0\.0\.0\.0/);
-    }
+  it('rejects localhost in a production API base URL', () => {
+    expect(() => validateProductionApiBaseUrl('http://localhost:8080/api')).toThrow(/localhost/);
+    expect(() => validateProductionApiBaseUrl('http://127.0.0.1:8080/api')).toThrow(/localhost/);
   });
 });
 

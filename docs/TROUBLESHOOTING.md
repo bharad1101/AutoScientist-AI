@@ -32,6 +32,27 @@
 - Tokens expire by default after 24 hours (`86400000 ms`).
 - Log out and log back in, or adjust `app.jwt.expiration-ms` in `backend/src/main/resources/application.yml`.
 
+### Issue 1.4: Login Rejected but Registration Says Email Already Exists
+**Symptom**: An existing account cannot log in, but registering the same email
+returns "Email is already registered".
+**Reason**: The browser is usually talking to a different backend/database than
+the one where the production account was created. Common causes are a production
+frontend bundle with a baked-in `http://localhost:8080/api` URL, or a backend
+running the `dev` profile (H2) instead of `mysql`.
+**Resolution**:
+1. Check the deployed bundle for a localhost URL:
+   ```bash
+   rg -n "localhost:8080" frontend/dist || echo "no localhost URL baked in"
+   ```
+2. Confirm the frontend build environment has
+   `VITE_API_BASE_URL=https://<your-backend-host>/api`. Production builds now
+   refuse missing, relative, non-HTTPS, or localhost values.
+3. Confirm the backend runs `SPRING_PROFILES_ACTIVE=mysql` with the production
+   datasource. The application defaults to `mysql`, refuses H2 outside
+   dev/test, and refuses the `dev` profile on Render.
+4. Verify the account is in the production database and that
+   `password_hash` is populated from the legacy `password` column when needed.
+
 ---
 
 ## 2. Statistical & Machine Learning Edge Cases
