@@ -1,205 +1,106 @@
-# AutoScientist AI — REST API Documentation
+# AutoScientist AI REST API
 
-Base URL: `http://localhost:8080/api`
+The backend API is rooted at `/api`. All endpoints require
+`Authorization: Bearer <JWT>` except `GET /api/health` and the four account
+bootstrap/recovery endpoints: register, login, forgot password, and reset
+password. Successful controller responses use the common `ApiResponse` wrapper
+unless the endpoint returns a file download.
 
-All protected endpoints require the HTTP Authorization header:
-```http
-Authorization: Bearer <JWT_TOKEN>
-```
+## Authentication
 
----
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/auth/register` | Create an account and start a session |
+| POST | `/api/auth/login` | Authenticate and issue a JWT |
+| POST | `/api/auth/forgot-password` | Request a reset email (generic response) |
+| POST | `/api/auth/reset-password` | Consume a single-use reset token |
+| GET | `/api/auth/me` | Get the authenticated user |
+| POST | `/api/auth/logout` | Client logout acknowledgement; JWT is otherwise stateless |
 
-## 1. Authentication (`/api/auth`)
+## Datasets and workflow
 
-### `POST /api/auth/register`
-Register a new scientific researcher account.
-- **Request Body**:
-  ```json
-  {
-    "name": "Dr. Jane Doe",
-    "email": "jane@university.edu",
-    "password": "SecurePassword123!"
-  }
-  ```
-- **Response**: `201 Created` with JWT `token` and user profile.
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/datasets/preview` | Preview CSV or Excel import; multipart `file`, optional `options` |
+| POST | `/api/datasets/upload` | Import and profile CSV or Excel; multipart `file`, optional `name`, `description`, `options` |
+| GET | `/api/datasets` | List the authenticated user's datasets |
+| GET | `/api/datasets/{id}` | Get dataset detail and profile |
+| GET | `/api/datasets/{id}/quality` | Get data quality report |
+| GET | `/api/datasets/{id}/workflow-status` | Get workflow completion state |
+| POST | `/api/datasets/{id}/reprofile` | Reprofile with optional overrides |
+| PUT | `/api/datasets/{id}/exclusions` | Update excluded columns |
+| DELETE | `/api/datasets/{id}` | Delete the owned dataset and stored files |
 
-### `POST /api/auth/login`
-Authenticate with email and password.
-- **Request Body**:
-  ```json
-  {
-    "email": "jane@university.edu",
-    "password": "SecurePassword123!"
-  }
-  ```
-- **Response**: `200 OK` with JWT `token`.
+## EDA and association analysis
 
-### `POST /api/auth/forgot-password`
-Request a password-reset link. The response is always the same for known and
-unknown addresses (no account enumeration).
-- **Request Body**:
-  ```json
-  { "email": "jane@university.edu" }
-  ```
-- **Response**: `200 OK` with a generic confirmation. When the account exists,
-  a single-use link valid for 30 minutes is emailed to `FRONTEND_URL/reset-password?token=...`.
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/datasets/{datasetId}/associations` | Read computed associations |
+| POST | `/api/datasets/{datasetId}/associations/refresh` | Recompute associations |
+| GET | `/api/datasets/{datasetId}/eda/correlations` | Correlation matrix |
+| GET | `/api/datasets/{datasetId}/eda/boxplots` | Numeric five-number summaries |
+| GET | `/api/datasets/{datasetId}/eda/grouped` | Group summaries |
+| GET | `/api/datasets/{datasetId}/eda/histograms` | Numeric histograms |
+| GET | `/api/datasets/{datasetId}/eda/scatter` | Scatter data |
+| GET | `/api/datasets/{datasetId}/eda/missingness` | Missingness summary |
+| GET | `/api/datasets/{datasetId}/eda/categorical` | Categorical summaries |
+| GET | `/api/datasets/{datasetId}/eda/timeseries` | Time series data |
+| GET | `/api/datasets/{datasetId}/eda/group-distributions` | Group distributions |
+| GET | `/api/datasets/{datasetId}/eda/missingness-matrix` | Row/column missingness matrix |
 
-### `POST /api/auth/reset-password`
-Consume a reset token and set a new password. Tokens are stored only as SHA-256
-hashes and are invalidated after one successful use.
-- **Request Body**:
-  ```json
-  {
-    "token": "<token from the reset email>",
-    "newPassword": "NewSecurePassword456!"
-  }
-  ```
-- **Response**: `200 OK` on success; `400 Bad Request` for an expired, used, or
-  unknown token, a password shorter than 8 characters, or reuse of the current password.
+## Research, evidence, findings, and experiments
 
-### `GET /api/auth/me`
-Retrieve authenticated researcher details.
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/datasets/{datasetId}/research-questions` | Create a research question and hypotheses |
+| GET | `/api/datasets/{datasetId}/research-questions` | List dataset research questions |
+| GET | `/api/research-questions/{id}` | Get a research question |
+| POST | `/api/research-questions/{rqId}/hypotheses/{hypothesisId}/execute` | Run the hypothesis test |
+| GET | `/api/datasets/{datasetId}/evidence` | Get evidence graph |
+| GET | `/api/datasets/{datasetId}/reliability` | Get evidence reliability summary |
+| GET | `/api/datasets/{datasetId}/findings` | List findings for a dataset |
+| GET | `/api/findings/{id}` | Get a finding |
+| GET | `/api/experiments` | List experiments for the authenticated user |
+| GET | `/api/experiments/{id}` | Get an experiment and versions |
+| GET | `/api/experiments/{id}/comparison` | Compare experiment versions |
 
----
+## AutoML, explainability, fairness, what-if, and drift
 
-## 2. Dataset Management & Profiling (`/api/datasets`)
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/datasets/{id}/automl/train` | Train candidate models and persist the model run |
+| GET | `/api/datasets/{id}/automl/latest` | Read latest model run |
+| POST | `/api/datasets/{id}/automl/whatif` | Evaluate a what-if scenario |
+| GET | `/api/datasets/{id}/automl/whatif/schema` | Get supported scenario inputs |
+| GET | `/api/datasets/{id}/automl/feature-effect` | Get feature effect data |
+| GET | `/api/drift/compare` | Compare reference and target datasets (query parameters) |
+| POST | `/api/datasets/{id}/ask` | Ask a natural-language question about a dataset |
 
-### `POST /api/datasets/upload`
-Upload a raw CSV dataset (`multipart/form-data`).
-- **Form Parameters**:
-  - `file`: CSV file binary
-  - `name`: (Optional) Dataset name
-  - `description`: (Optional) Dataset description
-- **Response**: `201 Created` returning dataset metadata, profiled columns, and quality audit report.
+Fairness metrics and explainability outputs are included in model run results;
+they do not have separate controller routes.
 
-### `GET /api/datasets`
-List all datasets owned by the authenticated researcher.
+## Reports, dashboard, and health
 
-### `GET /api/datasets/{id}`
-Retrieve complete dataset profile, columns, extrema, and quality report.
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/datasets/{id}/reports` | Generate and persist a report |
+| GET | `/api/datasets/{id}/reports` | List reports for a dataset |
+| GET | `/api/reports` | List the authenticated user's reports |
+| GET | `/api/reports/{id}` | Get a report |
+| GET | `/api/reports/{id}/pdf` | Download PDF |
+| GET | `/api/reports/{id}/export/csv` | Download CSV export |
+| GET | `/api/reports/{id}/export/excel` | Download Excel export |
+| GET | `/api/reports/{id}/export/markdown` | Download Markdown export |
+| GET | `/api/dashboard/stats` | Get authenticated user's dashboard statistics |
+| GET | `/api/health` | Public lightweight process health response |
 
-### `DELETE /api/datasets/{id}`
-Securely delete dataset and storage artifacts.
+## Production notes
 
----
-
-## 3. Exploratory Data Analysis (`/api/datasets/{id}/eda`)
-
-### `GET /api/datasets/{id}/eda/correlations`
-Returns full Pearson correlation matrix between all numeric variables.
-
-### `GET /api/datasets/{id}/eda/boxplots`
-Returns five-number summaries (min, Q1, median, Q3, max) for numeric variables.
-
-### `GET /api/datasets/{id}/eda/grouped?numericVar=score&categoricalVar=group`
-Computes group-wise means, standard deviations, and sample counts.
-
----
-
-## 4. Association Discovery Engine (`/api/datasets/{id}/associations`)
-
-### `GET /api/datasets/{id}/associations`
-Returns all ranked bivariate associations computed using:
-- Pearson correlation ($r$, $r^2$, $p$-value)
-- Welch's t-test ($t$, Cohen's $d$, $p$-value)
-- One-Way ANOVA ($F$, $\eta^2$, $p$-value)
-- Chi-Square Test of Independence ($\chi^2$, Cramer's $V$, $p$-value)
-
-### `POST /api/datasets/{id}/associations/refresh`
-Recomputes and updates all pairwise association tests.
-
----
-
-## 5. Research Questions & Hypotheses (`/api/datasets/{id}/research`)
-
-### `POST /api/datasets/{id}/research/questions`
-Submit a research question in natural language or with explicit variables.
-- **Request Body**:
-  ```json
-  {
-    "questionText": "Does study_hours predict exam_score?",
-    "targetVariable": "exam_score",
-    "predictorVariable": "study_hours"
-  }
-  ```
-- **Response**: NLP entity matching, formal $H_0$ / $H_1$ hypotheses formulation, and suggested statistical test.
-
-### `POST /api/hypotheses/{id}/test`
-Executes empirical hypothesis test against dataset rows. Records decision (`REJECT_NULL` vs `FAIL_TO_REJECT_NULL`).
-
----
-
-## 6. AutoML, Explainability & Fairness (`/api/datasets/{id}/automl`)
-
-### `POST /api/datasets/{id}/automl/train`
-Triggers automated machine learning benchmark.
-- **Request Body**:
-  ```json
-  {
-    "targetColumn": "exam_score",
-    "problemType": "REGRESSION",
-    "sensitiveColumn": "gender"
-  }
-  ```
-- **Response**:
-  - Model leaderboard (Ridge Regression, Decision Trees, Random Forest).
-  - Permutation Feature Importance ranking.
-  - Demographic Parity and Disparate Impact (Four-Fifths rule) audit.
-
-### `POST /api/datasets/{id}/automl/whatif`
-Counterfactual scenario simulation.
-- **Request Body**:
-  ```json
-  {
-    "targetColumn": "exam_score",
-    "featureValues": {
-      "study_hours": 14.5,
-      "attendance_pct": 95.0
-    }
-  }
-  ```
-- **Response**: Predicted outcome, marginal delta from baseline mean, and top influences.
-
----
-
-## 7. Data Drift & Stability (`/api/drift`)
-
-### `GET /api/drift/compare?referenceId={refId}&targetId={tarId}`
-Calculates Population Stability Index (PSI), mean shifts, and Welch-t distribution shifts across features.
-
----
-
-## 8. Ask Dataset Natural Language Query (`/api/datasets/{id}/ask`)
-
-### `POST /api/datasets/{id}/ask`
-Query dataset in plain English with mathematical verification.
-- **Request Body**:
-  ```json
-  {
-    "query": "What is the average exam_score and are there outliers?"
-  }
-  ```
-- **Response**: Formatted scientific answer with exact calculated metrics.
-
----
-
-## 9. Scientific Reports & Vector PDF (`/api`)
-
-### `POST /api/datasets/{id}/reports`
-Synthesizes end-to-end scientific Markdown report.
-
-### `GET /api/reports`
-List generated discovery reports.
-
-### `GET /api/reports/{id}`
-Retrieve report Markdown and metadata.
-
-### `GET /api/reports/{id}/pdf`
-Downloads publication-ready PDF document (`application/pdf`).
-
----
-
-## 10. Live Dashboard (`/api/dashboard`)
-
-### `GET /api/dashboard/stats`
-Aggregates live counts of datasets, observations, associations, models, findings, quality index, and audit provenance timeline.
+- Dataset and associated feature access is scoped to the authenticated owner;
+  report and dataset ownership regression tests cover cross-user access.
+- Upload endpoints accept CSV and Excel files and enforce the application's
+  configured multipart size limit.
+- `GET /api/health` reports process status only. It does not perform a database
+  readiness check.
+- Reset-email delivery requires working SMTP configuration; the API keeps the
+  forgot-password response generic to avoid account enumeration.

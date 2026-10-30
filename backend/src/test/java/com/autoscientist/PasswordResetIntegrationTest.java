@@ -85,6 +85,22 @@ class PasswordResetIntegrationTest {
     }
 
     @Test
+    @DisplayName("Failed reset-email delivery keeps the response generic and removes the unusable token")
+    void failedDeliveryDoesNotLeaveResetToken() throws Exception {
+        User user = createUser("mail.failure@example.org", "OldPassword123!");
+        when(notifier.send(any(User.class), anyString(), anyLong())).thenReturn(false);
+
+        mockMvc.perform(post("/api/auth/forgot-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ForgotPasswordRequest(user.getEmail()))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value(
+                        "If an account exists for that email, a password reset link has been sent."));
+
+        assertThat(tokenRepository.count()).isZero();
+    }
+
+    @Test
     @DisplayName("Valid token resets the password, is stored hashed, and cannot be used twice")
     void validTokenResetsPasswordOnce() throws Exception {
         User user = createUser("reset.flow@example.org", "OldPassword123!");

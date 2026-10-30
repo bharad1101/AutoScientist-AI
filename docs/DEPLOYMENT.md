@@ -22,8 +22,10 @@ PORT=8080
 # Staging/production must use MySQL. The dev profile is local-only.
 SPRING_PROFILES_ACTIVE=mysql
 
-# Database Configuration (MySQL 8.0+) — REQUIRED for the mysql profile (no defaults)
-SPRING_DATASOURCE_URL=jdbc:mysql://localhost:3306/autoscientist_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+# Database Configuration (Aiven MySQL) — REQUIRED for the mysql profile (no defaults)
+# Use the host/port/database from Aiven Quick connect. REQUIRED encrypts traffic;
+# use VERIFY_CA/VERIFY_IDENTITY when the Aiven CA is configured.
+SPRING_DATASOURCE_URL=jdbc:mysql://<aiven-host>:<port>/<database>?sslMode=REQUIRED&serverTimezone=UTC
 SPRING_DATASOURCE_USERNAME=autoscientist_user
 SPRING_DATASOURCE_PASSWORD=<your-database-password>
 
@@ -35,7 +37,7 @@ JWT_SECRET=<generated-base64-secret>
 JWT_EXPIRATION_MS=86400000
 
 # File Upload Storage Directory (wired to app.upload.dir)
-FILE_UPLOAD_DIR=./uploads/datasets
+FILE_UPLOAD_DIR=/app/uploads/datasets
 
 # Password reset (link base URL must be the public frontend origin)
 FRONTEND_URL=https://<your-frontend-host>
@@ -63,7 +65,7 @@ SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=true
 
 ### Frontend Configuration (`frontend/.env`)
 ```bash
-# BUILD-TIME value. Set this in the deployment build environment (e.g. Vercel/Render).
+# BUILD-TIME value. Set this in the Vercel Production build environment.
 # It must be an absolute HTTPS URL for the deployed backend, ending in /api.
 VITE_API_BASE_URL=https://<your-backend-host>/api
 ```
@@ -74,18 +76,14 @@ VITE_API_BASE_URL=https://<your-backend-host>/api
 
 ---
 
-## 3. Database Initialization (MySQL)
+## 3. Database Initialization (Aiven MySQL)
 
-Log in to MySQL as root and initialize the schema:
-```bash
-mysql -u root -p < database/schema.sql
-```
-Create the application database user:
-```sql
-CREATE USER IF NOT EXISTS 'autoscientist_user'@'localhost' IDENTIFIED BY '<your-database-password>';
-GRANT ALL PRIVILEGES ON autoscientist_db.* TO 'autoscientist_user'@'localhost';
-FLUSH PRIVILEGES;
-```
+Create/select the application database and a migration-capable application user
+through the Aiven control panel or an approved DBA process. Keep connection
+credentials out of Git. Render connects over TLS using the Aiven JDBC
+host/port/database. Do not run `database/schema.sql` or a root-user
+initialization procedure against production; Flyway applies the versioned
+migrations on application startup.
 
 ### 3.1 Schema strategy & migrations (durable)
 
@@ -111,8 +109,7 @@ FLUSH PRIVILEGES;
     MySQL 9.7 instance and validated with Hibernate `ddl-auto=validate`.
 - **Existing databases that predate Flyway** (no `flyway_schema_history` table):
   Flyway writes a baseline row at version 1 and applies V2–V4; V1 is never
-  executed against them. Missing tables/columns from older releases are then
-  Missing tables/columns from older releases must be reviewed and reconciled
+  executed against them. Missing tables/columns from older releases must be reviewed and reconciled
   with a new migration before validation succeeds. All migration changes are
   additive — nothing is dropped or rewritten.
 - `database/schema.sql` remains the human-readable reference schema (with
@@ -262,9 +259,33 @@ APP_CORS_ALLOWED_ORIGINS=https://autoscientist.yourdomain.com
 When the frontend is served from the same origin via the Nginx block above, the origin
 matches automatically and no extra entry is required.
 
+## 8. Push-to-deploy with Render and Vercel
+
+The repository intentionally has no GitHub Actions deployment workflow; use
+the providers' native Git integrations to avoid duplicate deployments.
+
+- Connect the GitHub repository to both providers, select production branch
+  `main`, and enable automatic deploy on pushes to that branch.
+- Render: use Docker with either repository root `.` and `Dockerfile`, or root
+  `backend` and `Dockerfile`. Do not mix a root directory with a Dockerfile
+  path from the other build context. Set health check path `/api/health`,
+  attach a persistent disk at `/app/uploads`, and configure backend variables
+  above in Render's environment settings.
+- Vercel: set Root Directory to `frontend`, build command `npm run build`, and
+  output directory `dist`. Set `VITE_API_BASE_URL` to the backend's HTTPS API
+  base URL ending in `/api` in the Production build environment. The value is
+  embedded at build time, so changing it requires a new build.
+- Set `APP_CORS_ALLOWED_ORIGINS` to the exact production Vercel origin and
+  `FRONTEND_URL` to that frontend origin. Confirm the connected repository and
+  `main` branch in both provider dashboards; repository files cannot verify
+  those external settings.
+- After a push, inspect both providers' build/deploy logs. Verify Render
+  `/api/health` returns HTTP 200, Vercel root and a deep route load the SPA,
+  and browser API requests reach the backend without CORS errors.
+
 ---
 
-## 8. Post-Deploy Verification (smoke test)
+## 9. Post-Deploy Verification (smoke test)
 
 The public health endpoint is `/api/health`. Use the checks below to confirm a
 healthy deployment and the correct database/API wiring.

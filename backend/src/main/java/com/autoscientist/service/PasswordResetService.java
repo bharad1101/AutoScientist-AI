@@ -76,7 +76,13 @@ public class PasswordResetService {
                 .build();
         tokenRepository.save(token);
 
-        notifier.send(user, rawToken, Math.max(1, tokenTtlMinutes));
+        boolean delivered = notifier.send(user, rawToken, Math.max(1, tokenTtlMinutes));
+        if (!delivered) {
+            // Do not leave a usable token that the user was never sent. Keep the
+            // public response generic so delivery status cannot enumerate users.
+            tokenRepository.deleteByUser(user);
+            log.warn("Password reset instructions could not be delivered for user id {}", user.getId());
+        }
     }
 
     @Transactional
