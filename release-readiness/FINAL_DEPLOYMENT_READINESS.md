@@ -14,13 +14,13 @@ Date: 2026-10-30
 - Frontend build validates `VITE_API_BASE_URL` and rejects missing, localhost, or non-HTTPS values. It must be present at build time and end with `/api`.
 - Flyway migrations are V1–V4. Current build resolves Flyway 11.7.2; historical tests against MySQL 9.7.1 are not a substitute for staging verification. Officially verified versions listed by Flyway include MySQL 5.7, 8.0, and 9.4.
 - Files are local filesystem-backed. Docker declares `/app/uploads`, but the hosting provider must attach durable storage there.
-- Frontend dependencies were upgraded; post-upgrade npm audit reports 0 advisories. The production build still requires the real API URL.
+- Frontend dependencies were upgraded; clean `npm ci`, 126 tests, and post-upgrade npm audit (0 advisories) pass. The production build still requires the real API URL.
 
 ## Required before push / enabling automatic deploy
 
-Configure and verify the service settings and environment in `AUTOMATIC_DEPLOYMENT_GUIDE.md` and `PRODUCTION_ENVIRONMENT_VARIABLES.md`. Run the blocked provider-specific build with the real API URL. Confirm current Flyway migrations against the Aiven MySQL 8.x service in staging and verify an actual persistent mount. The current local `.env` points to localhost and is not suitable for production.
+Configure and verify service settings and environment in `AUTOMATIC_DEPLOYMENT_GUIDE.md` and `PRODUCTION_ENVIRONMENT_VARIABLES.md`. Set the real API URL and rebuild; confirm current Flyway migrations against the Aiven MySQL 8.x service in staging; verify the Render disk mount and provider pipelines. The current local `.env` points to localhost and is not suitable for production.
 
-The checked-out `main` branch reports **4 commits ahead and 4 behind** its configured upstream (`rajesh/main`). Before pushing, inspect both sides and integrate the upstream history with a normal merge or rebase; do not force-push. This pass did not fetch or change Git history.
+Git history is reconciled. The fetched `origin/main` is an ancestor of local `main`; local `main` tracks `origin/main`, so the prepared branch can be pushed as a normal fast-forward without force. The backup ref `backup/pre-push-2026-10-30` remains available.
 
 ## Post-deploy acceptance
 
