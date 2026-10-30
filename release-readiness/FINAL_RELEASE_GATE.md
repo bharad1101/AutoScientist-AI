@@ -18,7 +18,7 @@ Scope: final verification before pushing source to GitHub. No push, commit, depl
 | Frontend production build | BLOCKED | Real `VITE_API_BASE_URL` unavailable; localhost guard not bypassed |
 | Production config completeness | BLOCKED | Datasource, JWT, CORS, frontend URL, SMTP, upload disk not confirmed |
 | Tracked secrets | PASS | Only `.env.example` files tracked |
-| Upload persistence | WARNING | Local filesystem only; no volume declared; provider must mount a disk |
+| Upload persistence | WARNING | Local filesystem; Docker declares `/app/uploads`; provider must mount durable storage |
 | Dependency risk | PASS (current audit) | Vite 8.3.5, Vitest 4.1.12, React Router 7.18.5; post-upgrade npm audit reports 0 vulnerabilities |
 | Deployment pipeline | NOT VERIFIED | No repo CI workflow; provider config cannot be confirmed from source |
 

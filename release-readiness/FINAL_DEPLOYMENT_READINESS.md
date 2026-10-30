@@ -18,7 +18,7 @@ Date: 2026-10-30
 
 ## Required before push / enabling automatic deploy
 
-Configure and verify the service settings and environment in `AUTOMATIC_DEPLOYMENT_GUIDE.md` and `PRODUCTION_ENVIRONMENT_VARIABLES.md`. Run the blocked provider-specific build with the real API URL. Confirm MySQL 8.x migrations and an actual persistent mount. The current local `.env` points to localhost and is not suitable for production.
+Configure and verify the service settings and environment in `AUTOMATIC_DEPLOYMENT_GUIDE.md` and `PRODUCTION_ENVIRONMENT_VARIABLES.md`. Run the blocked provider-specific build with the real API URL. Confirm current Flyway migrations against the Aiven MySQL 8.x service in staging and verify an actual persistent mount. The current local `.env` points to localhost and is not suitable for production.
 
 The checked-out `main` branch reports **4 commits ahead and 4 behind** its configured upstream (`rajesh/main`). Before pushing, inspect both sides and integrate the upstream history with a normal merge or rebase; do not force-push. This pass did not fetch or change Git history.
 

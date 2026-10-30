@@ -10,7 +10,7 @@ Scope: `/Applications/AutoScientist AI` — backend, frontend, database, docs, s
 | Backend | Java 17, Spring Boot 3.5.16, Maven, Spring Security + JWT, Spring Data JPA, Flyway 11.7.2 |
 | Frontend | React 18, Vite 8.3.5, Bootstrap 5, Chart.js, Vitest 4.1.12, React Router 7.18.5 |
 | Persistence | MySQL 8.0+ (production), H2 (dev/test) |
-| Deployment artifacts | `backend/Dockerfile`, `frontend/vercel.json`, `scripts/*.sh` |
+| Deployment artifacts | root and backend Dockerfiles, `frontend/vercel.json`, `scripts/*.sh` |
 
 ## 2. Final verification
 

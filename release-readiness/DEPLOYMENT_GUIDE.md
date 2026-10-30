@@ -98,7 +98,7 @@ The test creates/drops only `as_it_fresh` and `as_it_legacy`. Do not point it at
 There is no repository CI workflow, so none of the following can be inferred from the repo:
 
 **Backend service**
-- [ ] Root directory is `backend`; Dockerfile path is `backend/Dockerfile`.
+- [ ] Confirm Render root directory and Dockerfile path agree: root `backend` + `Dockerfile` or root `.` + `Dockerfile`. Both builds use Java 17 and a non-root runtime.
 - [ ] Runtime uses Java 17 and the built jar `autoscientist-backend-1.0.0-SNAPSHOT.jar`.
 - [ ] `SPRING_PROFILES_ACTIVE=mysql` is set (the Dockerfile sets it, confirm it is not overridden).
 - [ ] All required env vars are present (datasource, `JWT_SECRET`, `APP_CORS_ALLOWED_ORIGINS`, `FRONTEND_URL`, SMTP, `FILE_UPLOAD_DIR`).

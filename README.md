@@ -166,7 +166,7 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## 👨‍💻 Author
 
-**Pola Bharadwaj**
+**Contributors:** Pola Bharadwaj and Kola Rajesh
 
 GitHub: [@bharad1101](https://github.com/bharad1101)
 
