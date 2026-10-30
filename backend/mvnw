@@ -1,11 +1,49 @@
 #!/bin/sh
-# AutoScientist AI Maven Wrapper Script
-MAVEN_EXEC="/Users/bharadwajpola/.m2/wrapper/dists/apache-maven-3.9.16/56ba1f9f/bin/mvn"
-if [ -f "$MAVEN_EXEC" ]; then
+# Portable Maven launcher for AutoScientist AI.
+#
+# Resolution order:
+#   1. MAVEN_HOME/bin/mvn (explicit override)
+#   2. mvn on PATH
+#   3. A locally unpacked Apache Maven under ~/.m2/wrapper/dists
+#   4. Common Homebrew/MacPorts locations
+#
+# This is NOT the Apache Maven Wrapper: it does not download Maven. CI images
+# and the backend Dockerfile already provide Maven, so no network bootstrap is
+# required.
+
+find_mvn() {
+    if [ -n "${MAVEN_HOME:-}" ] && [ -x "$MAVEN_HOME/bin/mvn" ]; then
+        printf '%s\n' "$MAVEN_HOME/bin/mvn"
+        return 0
+    fi
+    if command -v mvn >/dev/null 2>&1; then
+        command -v mvn
+        return 0
+    fi
+    if [ -d "$HOME/.m2/wrapper/dists" ]; then
+        candidate=$(find "$HOME/.m2/wrapper/dists" -type f -path '*/bin/mvn' 2>/dev/null | head -n 1)
+        if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
+    for candidate in \
+        /opt/homebrew/bin/mvn \
+        /usr/local/bin/mvn \
+        /opt/local/bin/mvn; do
+        if [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+MAVEN_EXEC=$(find_mvn)
+if [ -n "$MAVEN_EXEC" ]; then
     exec "$MAVEN_EXEC" "$@"
-elif command -v mvn >/dev/null 2>&1; then
-    exec mvn "$@"
-else
-    echo "ERROR: Maven not found." >&2
-    exit 1
 fi
+
+echo "ERROR: Maven not found." >&2
+echo "Install Maven 3.9+ or set MAVEN_HOME to a Maven installation." >&2
+exit 1

@@ -129,14 +129,37 @@ public class FeatureEngineeringEngine {
         Collections.shuffle(allRows, new Random(RANDOM_SEED));
 
         int totalN = allRows.size();
-        int trainN = (int) Math.round(totalN * 0.70);
-        int valN = (int) Math.round(totalN * 0.15);
+        if (totalN == 0) {
+            throw new IllegalArgumentException("Dataset has no data rows to split.");
+        }
+
+        // Disjoint 70/15/15 split. Tiny datasets cannot support all three partitions,
+        // so they degrade to train-only (1 row) or train+test (2 rows) rather than
+        // reusing the same rows for validation/testing (which would leak the training
+        // targets into the reported metrics).
+        int trainN;
+        int valN;
+        if (totalN <= 2) {
+            trainN = 1;
+            valN = 0;
+        } else {
+            trainN = (int) Math.round(totalN * 0.70);
+            valN = (int) Math.round(totalN * 0.15);
+            if (trainN < 1) trainN = 1;
+            if (trainN + valN >= totalN) {
+                valN = Math.min(valN, Math.max(0, totalN - 2));
+                trainN = totalN - valN - 1;
+            }
+        }
         int testN = totalN - trainN - valN;
-        if (trainN < 2) trainN = totalN; // small dataset fallback
 
         List<List<String>> trainRows = allRows.subList(0, trainN);
-        List<List<String>> valRows = (trainN < totalN) ? allRows.subList(trainN, trainN + valN) : allRows;
-        List<List<String>> testRows = (trainN + valN < totalN) ? allRows.subList(trainN + valN, totalN) : allRows;
+        List<List<String>> valRows = valN > 0
+                ? allRows.subList(trainN, trainN + valN)
+                : Collections.emptyList();
+        List<List<String>> testRows = testN > 0
+                ? allRows.subList(trainN + valN, totalN)
+                : Collections.emptyList();
 
         // 1. Compute Train-set imputation values (prevents data leakage)
         Map<String, Double> numMedians = new HashMap<>();
@@ -245,6 +268,11 @@ public class FeatureEngineeringEngine {
         preprocConfig.put("randomSeed", RANDOM_SEED);
         preprocConfig.put("splitRatio", "70/15/15");
         preprocConfig.put("resolvedTarget", resolvedTarget);
+        preprocConfig.put("smallSample", totalN < 5);
+        if (totalN < 5) {
+            preprocConfig.put("splitWarning", "Only " + totalN + " usable row(s): train/validation/test "
+                    + "partitions are disjoint but too small for reliable metrics.");
+        }
 
         // Expose the fitted transformation so downstream consumers (e.g. the what-if
         // simulator) can encode RAW user inputs exactly the way training did,

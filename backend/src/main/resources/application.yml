@@ -4,6 +4,12 @@ server:
   # SERVER_PORT takes priority; PORT is the Render-conventional fallback.
   port: ${SERVER_PORT:${PORT:8080}}
 
+  # Let in-flight requests finish when the platform sends SIGTERM.
+  shutdown: graceful
+
+  # Respect X-Forwarded-Proto/Host from the hosting provider's TLS terminator.
+  forward-headers-strategy: framework
+
   servlet:
 
     context-path: /
@@ -19,6 +25,11 @@ spring:
   profiles:
 
     active: ${SPRING_PROFILES_ACTIVE:mysql}
+
+  lifecycle:
+
+    # Give in-flight requests and pools time to close before the JVM exits.
+    timeout-per-shutdown-phase: 30s
 
 
 
@@ -64,9 +75,29 @@ app:
 
     expiration-ms: ${JWT_EXPIRATION_MS:86400000} # 24 hours
 
+  cors:
+
+    # Comma-separated browser origins. The mysql profile below has no default,
+    # so production startup fails unless APP_CORS_ALLOWED_ORIGINS is supplied.
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173}
+
   upload:
 
     dir: ${FILE_UPLOAD_DIR:./uploads/datasets}
+
+  password-reset:
+
+    token-ttl-minutes: ${PASSWORD_RESET_TTL_MINUTES:30}
+
+    min-interval-seconds: ${PASSWORD_RESET_MIN_INTERVAL_SECONDS:60}
+
+    frontend-url: ${FRONTEND_URL:http://localhost:5173}
+
+    from: ${PASSWORD_RESET_FROM:no-reply@autoscientist.local}
+
+    outbox-enabled: ${PASSWORD_RESET_OUTBOX_ENABLED:false}
+
+    outbox-dir: ${PASSWORD_RESET_OUTBOX_DIR:./data/mail-outbox}
 
 
 
@@ -95,6 +126,20 @@ spring:
 
     driver-class-name: com.mysql.cj.jdbc.Driver
 
+    hikari:
+
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:30000}
+
+      validation-timeout: 5000
+
+      idle-timeout: 600000
+
+      max-lifetime: 1800000
+
   # No default here on purpose: staging/production must supply JWT_SECRET
   # (base64, >= 64 bytes decoded, e.g. `openssl rand -base64 64 | tr -d '\n'`).
   # Startup fails fast if it is missing; the dev-only fallback lives in the
@@ -104,7 +149,9 @@ spring:
 
     hibernate:
 
-      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+      # Flyway owns production schema changes; validate instead of silently
+      # altering the live schema. Override only in isolated dev/test.
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:validate}
 
     database-platform: org.hibernate.dialect.MySQLDialect
 
@@ -112,8 +159,8 @@ spring:
 
     enabled: ${SPRING_FLYWAY_ENABLED:true}
 
-    # Databases that predate Flyway are baselined at V1; only the additive
-    # V2 delta is applied to them. Fresh databases run V1 + V2.
+    # Databases that predate Flyway are baselined at V1; the additive V2-V4
+    # deltas are applied to them. Fresh databases run V1-V4.
 
     baseline-on-migrate: true
 
@@ -134,6 +181,28 @@ app:
     # Required, no fallback: startup fails fast when JWT_SECRET is unset.
 
     secret: ${JWT_SECRET}
+
+  cors:
+
+    # Required, no fallback: a production deployment must name its browser origin.
+
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS}
+
+  upload:
+
+    # Required, no fallback: point this at the mounted persistent disk.
+
+    dir: ${FILE_UPLOAD_DIR}
+
+  password-reset:
+
+    # Required, no fallback: reset links must point at the public frontend.
+
+    frontend-url: ${FRONTEND_URL}
+
+    # Set the spring.mail.* variables to enable actual email delivery.
+
+    from: ${PASSWORD_RESET_FROM:no-reply@autoscientist.local}
 
 
 
@@ -158,3 +227,7 @@ spring:
     console:
       enabled: true
       path: /h2-console
+
+app:
+  password-reset:
+    outbox-enabled: true

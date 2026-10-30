@@ -37,7 +37,9 @@ api.interceptors.response.use(
         pathname === '/' ||
         pathname === '/home' ||
         pathname === '/login' ||
-        pathname === '/register';
+        pathname === '/register' ||
+        pathname === '/forgot-password' ||
+        pathname === '/reset-password';
 
       // Auth-check endpoints and requests with skipAuthRedirect must not trigger global navigation
       const isAuthCheck = error.config?.url?.includes('/auth/me');

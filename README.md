@@ -23,7 +23,7 @@ AutoScientist AI is a full-stack application designed to simplify the data scien
 
 | Component | Technologies |
 |---|---|
-| Backend | Java 21, Spring Boot 3 |
+| Backend | Java 17, Spring Boot 3 |
 | Frontend | React 18, Vite |
 | UI | Bootstrap 5 |
 | Charts | Chart.js |
@@ -42,7 +42,7 @@ AutoScientist AI
 │   └── Chart.js
 │
 ├── Backend
-│   ├── Java 21
+│   ├── Java 17
 │   ├── Spring Boot 3
 │   ├── Statistical and ML Engines
 │   └── REST APIs
@@ -58,8 +58,8 @@ AutoScientist AI
 
 Install the following tools:
 
-- Java Development Kit (JDK) 21
-- Node.js and npm
+- Java Development Kit (JDK) 17 or newer
+- Node.js 22.12+ and npm (frontend build tool requirement)
 - Git
 - MySQL, if using the MySQL configuration
 
@@ -72,19 +72,9 @@ cd AutoScientist-AI
 
 ### 2. Start the backend
 
-Open a terminal in the project directory and follow the backend build configuration.
-
-For a Maven-based Spring Boot project:
-
 ```bash
 cd backend
 SPRING_PROFILES_ACTIVE=dev ./mvnw spring-boot:run
-```
-
-If the project uses a system-installed Maven instead of the Maven wrapper, use:
-
-```bash
-SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run
 ```
 
 The `dev` profile uses local file-backed H2. Production must use
@@ -113,19 +103,33 @@ Open the local frontend URL printed by Vite. The default development address is 
 http://localhost:5173
 ```
 
-**Note:** Confirm the actual backend and frontend folder names and build commands in your repository before relying on these instructions.
-
 ## 🧪 Testing
 
-Run the backend tests using the build tool configured in the project.
-
-For Maven:
-
 ```bash
-./mvnw test
+cd backend && ./mvnw clean test
+cd ../frontend && npm test -- --run
 ```
 
-For a Gradle project, use its Gradle wrapper and configured test task instead.
+## Production Deployment
+
+Backend production runs from `backend/Dockerfile` with Java 17, the `mysql`
+profile, Flyway migrations, and `/api/health`. Frontend production builds from
+`frontend` with `npm run build` and publishes `dist`; set
+`VITE_API_BASE_URL` to the actual HTTPS backend URL ending in `/api` at build
+time. The build rejects localhost URLs.
+
+Set backend datasource credentials, `JWT_SECRET`, exact CORS origins,
+`FRONTEND_URL`, and `FILE_UPLOAD_DIR` in the hosting provider's secret settings.
+Set `SPRING_JPA_HIBERNATE_DDL_AUTO=validate` and attach a durable disk at
+`/app/uploads` before accepting uploaded datasets. No production hostname or
+credentials are embedded in this repository. A Dockerfile and Vercel rewrite do
+not prove that provider auto-deploy is configured; verify the connected GitHub
+repository, branch, build settings, disk mount, and health check in the hosting
+dashboards.
+
+See the [release-readiness guide](release-readiness/FINAL_DEPLOYMENT_READINESS.md)
+and [environment variable reference](release-readiness/PRODUCTION_ENVIRONMENT_VARIABLES.md)
+for required settings and outstanding pre-push checks.
 
 ## 🔐 Configuration
 

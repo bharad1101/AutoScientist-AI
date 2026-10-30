@@ -30,6 +30,8 @@ backend/src/test/java/com/autoscientist/
 
 ├── AuthServiceTest.java                      # Password hashing, token generation, user repo mocks
 
+├── PasswordResetIntegrationTest.java         # Forgot/reset flow, expiry, single use, reuse rejection
+
 ├── DatasetProfilerTest.java                  # Type inference, extrema, distributions, missing values
 
 ├── DataQualityEngineTest.java                # Quality scoring (0-100), duplicate detection, outliers

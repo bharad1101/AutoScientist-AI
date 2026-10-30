@@ -62,9 +62,31 @@ public class DeploymentProfileGuard implements ApplicationRunner {
     }
 
     private boolean isHostedRuntime() {
-        return Boolean.parseBoolean(environment.getProperty("RENDER", "false"))
-                || !environment.getProperty("RENDER_SERVICE_ID", "").isBlank()
-                || !environment.getProperty("RENDER_EXTERNAL_URL", "").isBlank();
+        if (Boolean.parseBoolean(environment.getProperty("RENDER", "false"))) {
+            return true;
+        }
+        String[] hostedMarkers = {
+                "RENDER_SERVICE_ID",
+                "RENDER_EXTERNAL_URL",
+                "DYNO",
+                "FLY_APP_NAME",
+                "RAILWAY_ENVIRONMENT",
+                "K_SERVICE",
+                "KUBERNETES_SERVICE_HOST",
+                "ECS_CONTAINER_METADATA_URI_V4",
+                "ECS_CONTAINER_METADATA_URI",
+                "WEBSITE_SITE_NAME",
+                "GAE_ENV",
+                "CF_INSTANCE_INDEX",
+                "VERCEL"
+        };
+        for (String marker : hostedMarkers) {
+            String value = environment.getProperty(marker, "");
+            if (value != null && !value.isBlank()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isEmbeddedDatabase(String url) {

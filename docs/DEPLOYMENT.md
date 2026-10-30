@@ -36,6 +36,21 @@ JWT_EXPIRATION_MS=86400000
 
 # File Upload Storage Directory (wired to app.upload.dir)
 FILE_UPLOAD_DIR=./uploads/datasets
+
+# Password reset (link base URL must be the public frontend origin)
+FRONTEND_URL=https://<your-frontend-host>
+PASSWORD_RESET_FROM=no-reply@yourdomain.com
+PASSWORD_RESET_TTL_MINUTES=30
+PASSWORD_RESET_MIN_INTERVAL_SECONDS=60
+
+# SMTP delivery for reset emails. Without SMTP, forgot-password cannot deliver
+# a link in production (the dev outbox is local-only).
+SPRING_MAIL_HOST=smtp.yourdomain.com
+SPRING_MAIL_PORT=587
+SPRING_MAIL_USERNAME=<smtp-username>
+SPRING_MAIL_PASSWORD=<smtp-password>
+SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH=true
+SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=true
 ```
 
 > **Never commit real credentials.** `backend/.env` and `frontend/.env` are
@@ -80,27 +95,33 @@ FLUSH PRIVILEGES;
   - `dev` profile: local file-backed H2 with Hibernate `update`; accounts persist
     across local restarts. `test` profile: isolated in-memory H2 with `create-drop`.
     Flyway is disabled for both.
-  - `mysql` profile: Flyway migrates on startup, then Hibernate validates or
-    updates per `SPRING_JPA_HIBERNATE_DDL_AUTO` (default `update`; set
-    `validate` after the first successful migration for strict checking).
+  - `mysql` profile: Flyway migrates on startup, then Hibernate validates the
+    resulting schema. `SPRING_JPA_HIBERNATE_DDL_AUTO` defaults to `validate`;
+    use reviewed additive migrations to reconcile schema differences rather
+    than enabling automatic schema updates in production.
 - Migration files:
   - `V1__baseline.sql` — full current schema (17 tables) for **fresh** databases.
   - `V2__provenance_delta.sql` — additive, guarded delta (`datasets.source_stored_filename`,
     `analysis_runs`, `drift_snapshots` + index, `data_quality_reports.uq_quality_dataset`).
     Every statement is a no-op when the object already exists, so it is safe on
     databases that Hibernate has already updated and idempotent under re-runs.
+  - `V3__association_confidence_intervals.sql` — additive association confidence columns.
+  - `V4__password_reset_tokens.sql` — `password_reset_tokens` (SHA-256 token hashes,
+    expiry, single-use; FK to `users` with `ON DELETE CASCADE`). Applied to the local
+    MySQL 9.7 instance and validated with Hibernate `ddl-auto=validate`.
 - **Existing databases that predate Flyway** (no `flyway_schema_history` table):
-  Flyway writes a baseline row at version 1 and applies only V2; V1 is never
+  Flyway writes a baseline row at version 1 and applies V2–V4; V1 is never
   executed against them. Missing tables/columns from older releases are then
-  added by Hibernate `ddl-auto=update` on the same startup. All statements in
-  both directions are additive — nothing is dropped or rewritten.
+  Missing tables/columns from older releases must be reviewed and reconciled
+  with a new migration before validation succeeds. All migration changes are
+  additive — nothing is dropped or rewritten.
 - `database/schema.sql` remains the human-readable reference schema (with
   MySQL-specific decorations) and is kept in sync with the JPA entities by
   `SchemaReferenceSyncTest`. `MigrationSqlCompatibilityTest` rejects SQL that
   H2 accepts but real MySQL rejects (e.g. `CREATE INDEX IF NOT EXISTS`).
 - **Validated migration scenarios** (recorded in `docs/IMPLEMENTATION_PROGRESS.md`):
-  fresh install (V1+V2, Hibernate `validate`), legacy pre-Flyway database
-  (baseline@1 + V2 + `update`, data preserved), restart idempotency.
+  fresh install (V1–V4, Hibernate `validate`), legacy pre-Flyway database
+  (baseline@1 + V2–V4 + `update`, data preserved), restart idempotency.
 - **Rollback / recovery**: migrations are additive-only, so recovery from a
   failed migration is (1) restore the pre-start backup (see §3.3), (2) `java -jar
   ... repair` equivalent via a one-off Flyway repair if a migration half-applied

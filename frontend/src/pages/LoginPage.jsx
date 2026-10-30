@@ -110,6 +110,12 @@ const LoginPage = () => {
                 </div>
               </div>
 
+              <div className="mb-3 text-end">
+                <Link to="/forgot-password" className="small text-decoration-none">
+                  Forgot password?
+                </Link>
+              </div>
+
               <button
                 type="submit"
                 className="btn btn-primary w-100 py-2 fw-semibold d-flex align-items-center justify-content-center gap-2"

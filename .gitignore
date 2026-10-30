@@ -21,6 +21,8 @@ data/
 .vscode/
 .idea/
 .DS_Store
+# macOS Finder bookmark/alias accidentally created at the repo root
+/AutoScientist AI
 
 # Logs
 *.log

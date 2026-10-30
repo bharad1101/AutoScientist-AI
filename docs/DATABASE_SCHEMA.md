@@ -12,6 +12,8 @@
 ```
 [ users ]
    │
+   ├──< [ password_reset_tokens ]
+   │
    ├──< [ datasets ]
    │       │
    │       ├──< [ dataset_columns ]
@@ -122,3 +124,15 @@ Scientific conclusions synthesized from verified statistical tests and ML models
 
 ### 9. `reports`
 Assembles all discovery results into reproducible Markdown documents and vector PDF binary exports.
+
+### 10. `password_reset_tokens`
+Stores single-use password-reset tokens. Only the SHA-256 hash is persisted; the
+raw token exists solely in the emailed link.
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | BIGINT | PRIMARY KEY, AUTO_INCREMENT | Token identifier |
+| `user_id` | BIGINT | NOT NULL, FK -> users(id) ON DELETE CASCADE | Account the token belongs to |
+| `token_hash` | VARCHAR(64) | NOT NULL, UNIQUE | Hex SHA-256 of the raw token |
+| `expires_at` | TIMESTAMP | NOT NULL | Expiry (default 30 minutes after issue) |
+| `used_at` | TIMESTAMP | NULL | Set on successful use before the row is removed |
+| `created_at` | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP | Issue timestamp |

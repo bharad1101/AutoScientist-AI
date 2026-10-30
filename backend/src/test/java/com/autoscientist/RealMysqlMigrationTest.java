@@ -25,14 +25,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * H2. This test therefore exercises the two real paths on real MySQL:
  *
  * <ol>
- *   <li><b>fresh install</b> — empty schema, Flyway V1+V2, then Hibernate
+ *   <li><b>fresh install</b> — empty schema, Flyway V1–V4, then Hibernate
  *       {@code ddl-auto=validate} must find the schema complete.</li>
  *   <li><b>legacy pre-Flyway upgrade</b> — a minimised copy of the historical
  *       schema (narrower tables, {@code users.password} NOT NULL,
  *       {@code datasets.file_type}/{@code file_path}/{@code uploaded_at} NOT
  *       NULL, no {@code created_at}) with a live row; Flyway baselines at V1 and
- *       applies V2, after which the legacy rows survive and the schema satisfies
- *       every current entity column the application writes.</li>
+ *       applies V2–V4, after which the legacy rows survive and the schema
+ *       satisfies every current entity column the application writes.</li>
  * </ol>
  *
  * Run it with, for example:
@@ -94,7 +94,7 @@ class RealMysqlMigrationTest {
         DataSource ds = dataSource(db);
         try {
             var result = flyway(ds, false).migrate();
-            assertThat(result.migrationsExecuted).as("fresh install runs V1 + V2").isEqualTo(2);
+            assertThat(result.migrationsExecuted).as("fresh install runs V1–V4").isEqualTo(4);
             // every table the entities require must exist
             assertThat(scalar(ds, "SELECT COUNT(*) FROM information_schema.tables "
                     + "WHERE table_schema='" + db + "' AND table_name='analysis_runs'")).isEqualTo(1);
@@ -130,9 +130,9 @@ class RealMysqlMigrationTest {
                             + "row_count,column_count,uploaded_at) VALUES "
                             + "(1,'old.csv','old-uuid.csv','/data/old.csv','text/csv',1234,42,3,NOW())");
 
-            // documented path: baseline at V1, then apply only the additive V2
+            // documented path: baseline at V1, then apply only the additive V2–V4
             var result = flyway(ds, true).migrate();
-            assertThat(result.migrationsExecuted).as("legacy DB applies only V2").isEqualTo(1);
+            assertThat(result.migrationsExecuted).as("legacy DB applies only the additive V2–V4").isEqualTo(3);
 
             // existing data preserved
             assertThat(scalar(ds, "SELECT COUNT(*) FROM users")).isEqualTo(1);

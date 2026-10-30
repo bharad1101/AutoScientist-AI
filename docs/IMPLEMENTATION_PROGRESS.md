@@ -877,3 +877,48 @@ Added a rigorous end-to-end integration test simulating an entire backend proces
   - **Result**: **93 tests passed across 18 test files (100% passing)**.
 - **Frontend Production Build**: `cd frontend && npm run build`
   - **Result**: **139 modules transformed, built in 4.11s with 0 errors**.
+
+---
+
+## Session 5 (2026-10-28) — production ML 500 fix + password reset
+
+### Root cause fixed: AutoML cold-cache 500 on MySQL
+- **Symptom**: after a backend restart, `GET /api/datasets/{id}/automl/whatif/schema`
+  and `/api/datasets/{id}/automl/feature-effect` returned HTTP 500 in production.
+- **Cause**: both methods were `@Transactional(readOnly = true)` but
+  `loadModelContext` retrains and persists `experiment_versions` on a cold cache.
+  MySQL rejects the insert with `Connection is read-only. Queries leading to data
+  modification are not allowed`; H2 does not enforce this, so local H2 tests passed.
+- **Fix**: both methods in `AutoMlService` are now normal `@Transactional` with an
+  explanatory comment. Reproduced on local MySQL 9.7 and verified after a cold
+  restart (both endpoints `200`).
+
+### Password reset (backend + frontend)
+- New `password_reset_tokens` table (`V4__password_reset_tokens.sql`), SHA-256
+  token hashes only, 30-minute expiry, single use, per-user 60-second request
+  interval, and invalidation of older tokens on a new request.
+- Endpoints `POST /api/auth/forgot-password` and `POST /api/auth/reset-password`
+  with identical responses for known/unknown emails (no enumeration). Rejects
+  expired/used/unknown tokens, passwords shorter than 8 characters, and reuse of
+  the current password.
+- Delivery via SMTP (`spring-boot-starter-mail`), with a local `.eml` outbox
+  fallback for development. Tokens are never logged; only hashes are stored.
+- Frontend pages `/forgot-password` and `/reset-password`, public routes, 401
+  interceptor exemptions, and a login-page link. Frontend tests cover both pages.
+- `.env.example` and deployment docs document `FRONTEND_URL`, reset TTL/interval,
+  and SMTP variables.
+
+### Verification actually run
+- Backend: `./mvnw -q test` → **101 tests, 0 failures, 0 errors, 2 skipped**
+  across 34 test classes.
+- Frontend: `npm test -- --run` → **126 tests passed across 21 test files**;
+  `VITE_API_BASE_URL=https://autoscientist-ai-backend.onrender.com/api npm run build`
+  → success (141 modules).
+- MySQL 9.7 (local, `ddl-auto=validate`): Flyway applied V4, Hibernate validated
+  the schema, cold-cache what-if/feature-effect returned `200`.
+- Password-reset MySQL E2E: register → forgot (`.eml` outbox) → reset → old
+  password `401`, new password `200`; reused token `400`; DB stored a 64-char
+  SHA-256 hash, not the raw token.
+- `MysqlBaselineMigrationTest` now creates the V4 table via an H2 `INIT` shim
+  because V2/V3 are MySQL-only and the test intentionally targets V1.
+- No production deploy, commit, or push was performed.

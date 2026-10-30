@@ -433,8 +433,13 @@ public class AutoMlService {
     /**
      * Describes the raw inputs the trained model expects, so the UI can render
      * numeric fields and categorical selectors with the correct reference values.
+     *
+     * <p>Not read-only: on a cold cache {@link #loadModelContext} legitimately
+     * rebuilds and persists the recorded experiment. MySQL enforces read-only
+     * connections, so marking this read-only caused an HTTP 500 after every
+     * backend restart.</p>
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public WhatIfSchemaDto getWhatIfSchema(Long datasetId, User user) {
         Dataset dataset = datasetService.getDatasetEntityWithOwnership(datasetId, user);
         CachedModelContext context = loadModelContext(dataset, user);
@@ -478,8 +483,11 @@ public class AutoMlService {
      * Computes the marginal feature-effect curve across a grid of values (or distinct categories)
      * for a selected feature, evaluated on the warm fitted model holding other variables at
      * their training reference baseline.
+     *
+     * <p>Not read-only for the same cold-cache rebuild reason as
+     * {@link #getWhatIfSchema(Long, User)}.</p>
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public FeatureEffectDto computeFeatureEffect(Long datasetId, String featureName, User user) {
         Dataset dataset = datasetService.getDatasetEntityWithOwnership(datasetId, user);
         CachedModelContext context = loadModelContext(dataset, user);

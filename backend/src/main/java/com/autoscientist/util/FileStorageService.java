@@ -2,6 +2,7 @@ package com.autoscientist.util;
 
 import com.autoscientist.exception.BadRequestException;
 import jakarta.annotation.PostConstruct;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -11,6 +12,7 @@ import java.io.InputStream;
 import java.nio.file.*;
 import java.util.UUID;
 
+@Slf4j
 @Service
 public class FileStorageService {
 
@@ -24,6 +26,10 @@ public class FileStorageService {
         try {
             this.uploadPath = Paths.get(uploadDirStr).toAbsolutePath().normalize();
             Files.createDirectories(this.uploadPath);
+            Path probe = Files.createTempFile(this.uploadPath, ".write-test-", ".tmp");
+            Files.deleteIfExists(probe);
+            log.info("Dataset storage ready at {} (files persist only if this path is on a mounted volume).",
+                    this.uploadPath);
         } catch (IOException e) {
             throw new RuntimeException("Could not initialize storage directory: " + uploadDirStr, e);
         }

@@ -8,6 +8,8 @@ import ProtectedRoute from './components/ProtectedRoute';
 import RequireDatasetRoute from './components/RequireDatasetRoute';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import DashboardPage from './pages/DashboardPage';
 import DatasetsPage from './pages/DatasetsPage';
 import DatasetDetailPage from './pages/DatasetDetailPage';
@@ -25,7 +27,7 @@ import LandingPage from './pages/LandingPage';
 function AppFrame() {
   const { isAuthenticated } = useAuth();
   const location = useLocation();
-  const publicRoutes = ['/', '/home', '/login', '/register'];
+  const publicRoutes = ['/', '/home', '/login', '/register', '/forgot-password', '/reset-password'];
   const showSidebar = isAuthenticated && !publicRoutes.includes(location.pathname);
 
   return (
@@ -40,6 +42,8 @@ function AppFrame() {
                 <Route path="/home" element={<Navigate to="/" replace />} />
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/register" element={<RegisterPage />} />
+                <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+                <Route path="/reset-password" element={<ResetPasswordPage />} />
 
                 {/* Dashboard */}
                 <Route

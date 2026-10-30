@@ -34,6 +34,29 @@ Authenticate with email and password.
   ```
 - **Response**: `200 OK` with JWT `token`.
 
+### `POST /api/auth/forgot-password`
+Request a password-reset link. The response is always the same for known and
+unknown addresses (no account enumeration).
+- **Request Body**:
+  ```json
+  { "email": "jane@university.edu" }
+  ```
+- **Response**: `200 OK` with a generic confirmation. When the account exists,
+  a single-use link valid for 30 minutes is emailed to `FRONTEND_URL/reset-password?token=...`.
+
+### `POST /api/auth/reset-password`
+Consume a reset token and set a new password. Tokens are stored only as SHA-256
+hashes and are invalidated after one successful use.
+- **Request Body**:
+  ```json
+  {
+    "token": "<token from the reset email>",
+    "newPassword": "NewSecurePassword456!"
+  }
+  ```
+- **Response**: `200 OK` on success; `400 Bad Request` for an expired, used, or
+  unknown token, a password shorter than 8 characters, or reuse of the current password.
+
 ### `GET /api/auth/me`
 Retrieve authenticated researcher details.
 

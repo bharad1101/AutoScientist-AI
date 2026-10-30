@@ -5,28 +5,35 @@ WORKDIR /app
 COPY pom.xml .
 COPY src/ src/
 
-RUN mvn -B clean package -DskipTests
+RUN mvn -B -ntp clean package -DskipTests
 
-FROM eclipse-temurin:17-jre
+FROM eclipse-temurin:17-jre-jammy
 
 WORKDIR /app
 
-RUN useradd --system --uid 10001 appuser
+# gosu lets the entrypoint fix root-owned persistent-disk permissions and then
+# drop privileges before starting the JVM.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 appuser \
+    && useradd --system --uid 10001 --gid appuser --create-home appuser
 
 COPY --from=build /app/target/autoscientist-backend-1.0.0-SNAPSHOT.jar app.jar
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-# Create persistent-data directories and grant write access
-RUN mkdir -p /app/uploads/datasets /app/data/h2 \
+RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh \
+    && mkdir -p /app/uploads/datasets /app/data \
     && chown -R appuser:appuser /app/uploads /app/data
 
-USER appuser
-
 ENV SPRING_PROFILES_ACTIVE=mysql
+ENV FILE_UPLOAD_DIR=/app/uploads/datasets
 
-# Render supplies $PORT; we forward it to SERVER_PORT which application.yml reads.
-# If PORT is unset (local docker run), the app defaults to 8080.
+# Render supplies $PORT; the entrypoint forwards it to SERVER_PORT.
 ENV PORT=8080
 
-EXPOSE ${PORT}
+VOLUME ["/app/uploads"]
 
-ENTRYPOINT ["sh", "-c", "java -XX:MaxRAMPercentage=75.0 -DSERVER_PORT=${PORT} -jar app.jar"]
+EXPOSE 8080
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

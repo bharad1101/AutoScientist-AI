@@ -9,6 +9,7 @@ import com.autoscientist.security.AuthEntryPointJwt;
 import com.autoscientist.security.JwtUtils;
 import com.autoscientist.security.UserDetailsServiceImpl;
 import com.autoscientist.service.AuthService;
+import com.autoscientist.service.PasswordResetService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +40,9 @@ class AuthControllerTest {
 
     @MockBean
     private AuthService authService;
+
+    @MockBean
+    private PasswordResetService passwordResetService;
 
     @MockBean
     private JwtUtils jwtUtils;

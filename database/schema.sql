@@ -323,3 +323,15 @@ CREATE TABLE IF NOT EXISTS drift_snapshots (
     CONSTRAINT fk_drift_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
     INDEX idx_drift_snapshot_dataset (dataset_id, created_at)
 ) ENGINE=InnoDB;
+
+-- 18. Password Reset Tokens (single-use, hashed tokens)
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    token_hash VARCHAR(64) NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    used_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_password_reset_token_hash UNIQUE (token_hash),
+    CONSTRAINT fk_password_reset_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;

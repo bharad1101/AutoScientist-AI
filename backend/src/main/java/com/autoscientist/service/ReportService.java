@@ -45,9 +45,13 @@ public class ReportService {
 
         ResearchQuestion question = null;
         if (req != null && req.getResearchQuestionId() != null) {
-            question = researchQuestionRepository.findById(req.getResearchQuestionId()).orElse(null);
+            question = researchQuestionRepository.findById(req.getResearchQuestionId())
+                    .filter(q -> q.getUser() != null && q.getUser().getId().equals(user.getId()))
+                    .filter(q -> q.getDataset() != null && q.getDataset().getId().equals(datasetId))
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "Research question not found for this dataset: " + req.getResearchQuestionId()));
         } else {
-            List<ResearchQuestion> questions = researchQuestionRepository.findByDatasetOrderByCreatedAtDesc(dataset);
+            List<ResearchQuestion> questions = researchQuestionRepository.findByDatasetAndUserOrderByCreatedAtDesc(dataset, user);
             if (!questions.isEmpty()) question = questions.get(0);
         }
 
