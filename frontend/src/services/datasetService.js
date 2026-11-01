@@ -12,6 +12,7 @@ export const datasetService = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      timeout: 120000, // 2 min: upload + profiling + quality audit
     });
     return res.data;
   },
@@ -29,6 +30,7 @@ export const datasetService = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      timeout: 60000, // 1 min for preview parsing
     });
     return res.data;
   },

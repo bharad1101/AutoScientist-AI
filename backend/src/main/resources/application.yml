@@ -85,6 +85,19 @@ app:
 
     dir: ${FILE_UPLOAD_DIR:./uploads/datasets}
 
+  storage:
+
+    # "local" uses the filesystem at app.upload.dir.
+    # "s3" uses an S3-compatible service (AWS S3, Cloudflare R2, MinIO, etc.).
+    backend: ${STORAGE_BACKEND:local}
+
+    s3:
+      bucket: ${STORAGE_S3_BUCKET:}
+      endpoint: ${STORAGE_S3_ENDPOINT:}
+      region: ${STORAGE_S3_REGION:auto}
+      access-key: ${STORAGE_S3_ACCESS_KEY:}
+      secret-key: ${STORAGE_S3_SECRET_KEY:}
+
   password-reset:
 
     token-ttl-minutes: ${PASSWORD_RESET_TTL_MINUTES:30}
