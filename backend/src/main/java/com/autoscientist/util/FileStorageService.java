@@ -14,10 +14,13 @@ import java.util.UUID;
 /**
  * High-level file storage service used by all dataset-consuming code.
  *
- * <p>Delegates physical I/O to a pluggable {@link StorageBackend} (local
- * filesystem for development, S3-compatible for production). The public API
- * (store / retrieve / delete by opaque key) is unchanged so no downstream
- * service needs modification.</p>
+ * <p>Delegates physical I/O to a {@link StorageBackend} (local filesystem).
+ * The public API (store / retrieve / delete by opaque key) is stable so no
+ * downstream service needs modification.</p>
+ *
+ * <p><b>Render limitation:</b> Render's free tier uses an ephemeral filesystem.
+ * Uploaded files do not survive redeployments. When a file is missing, a
+ * user-friendly error message asks the user to re-upload the dataset.</p>
  */
 @Slf4j
 @Service

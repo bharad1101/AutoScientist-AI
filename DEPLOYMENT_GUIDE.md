@@ -2,26 +2,23 @@
 
 > **Branch:** `fix-dataset-storage-reliability`  
 > **Last verified commit:** see `git log --oneline -1`  
-> **Status:** ✅ Ready to deploy after completing the Cloudflare R2 and Render steps below
+> **Status:** ✅ Ready to deploy
 
 ---
 
 ## Table of Contents
 
 1. [Architecture overview](#1-architecture-overview)
-2. [Root cause of the storage problem](#2-root-cause-of-the-storage-problem)
-3. [Solution: Cloudflare R2](#3-solution-cloudflare-r2)
-4. [Step-by-step: Cloudflare R2 setup](#4-step-by-step-cloudflare-r2-setup)
-5. [Step-by-step: Render environment variables](#5-step-by-step-render-environment-variables)
-6. [Step-by-step: GitHub push and merge](#6-step-by-step-github-push-and-merge)
-7. [Vercel — no changes required](#7-vercel--no-changes-required)
-8. [Post-deployment verification checklist](#8-post-deployment-verification-checklist)
-9. [How to verify dataset persistence after a redeployment](#9-how-to-verify-dataset-persistence-after-a-redeployment)
-10. [Rollback procedure](#10-rollback-procedure)
-11. [Environment variable reference](#11-environment-variable-reference)
-12. [Security notes](#12-security-notes)
-13. [Changed files summary](#13-changed-files-summary)
-14. [Test results](#14-test-results)
+2. [Dataset storage and the ephemeral filesystem](#2-dataset-storage-and-the-ephemeral-filesystem)
+3. [Step-by-step: Render environment variables](#3-step-by-step-render-environment-variables)
+4. [Step-by-step: GitHub push and merge](#4-step-by-step-github-push-and-merge)
+5. [Vercel — no changes required](#5-vercel--no-changes-required)
+6. [Post-deployment verification checklist](#6-post-deployment-verification-checklist)
+7. [Rollback procedure](#7-rollback-procedure)
+8. [Environment variable reference](#8-environment-variable-reference)
+9. [Security notes](#9-security-notes)
+10. [Changed files summary](#10-changed-files-summary)
+11. [Test results](#11-test-results)
 
 ---
 
@@ -30,291 +27,234 @@
 | Layer | Technology | Host |
 |-------|-----------|------|
 | Frontend | React 18 + Vite + Bootstrap 5 | Vercel |
-| Backend API | Java 21 + Spring Boot 3 | Render (free) |
+| Backend API | Java 17 + Spring Boot 3 | Render (free Docker) |
 | Database | MySQL 8.4 | Aiven |
-| Dataset storage | **Cloudflare R2** (S3-compatible) | Cloudflare |
+| Dataset file storage | **Local filesystem** (`/app/uploads/datasets`) | Render container |
 
-The backend is deployed as a Docker container on Render's free tier. Render's free containers have an **ephemeral filesystem** — any files written to disk are lost on every redeployment or instance restart. Dataset files are now stored in Cloudflare R2, which persists across all Render container lifecycle events.
-
----
-
-## 2. Root cause of the storage problem
-
-`FileStorageService` previously stored uploaded CSV/Excel files at `/app/uploads/datasets` inside the Docker container. When Render redeploys the container (on every push, or when the instance is recycled), the container filesystem is wiped clean. MySQL metadata (file names, column types, row counts) survived — but the physical files did not. Every feature that reads a dataset file crashed with:
-
-```
-BadRequestException: File does not exist or access is restricted.
-```
+The backend is deployed as a Docker container on Render's free tier. Dataset
+metadata (file names, column types, row counts) is stored permanently in the
+Aiven MySQL database. Physical dataset files (CSV / Excel) are stored on the
+container's local filesystem.
 
 ---
 
-## 3. Solution: Cloudflare R2
+## 2. Dataset storage and the ephemeral filesystem
 
-A pluggable `StorageBackend` abstraction was added with two implementations:
+### How it works
 
-| Backend | `STORAGE_BACKEND` value | Use case |
-|---------|------------------------|----------|
-| `LocalStorageBackend` | `local` | Development (H2) or Render Persistent Disk |
-| `S3StorageBackend` | `s3` | **Production** — Cloudflare R2, AWS S3, MinIO |
+When a user uploads a CSV or Excel file, `FileStorageService` stores it at
+`/app/uploads/datasets/<UUID>.<ext>` inside the Docker container and records
+the UUID reference in MySQL.
 
-The `FileStorageService` public API is identical to before — all downstream services (`AutoML`, `EDA`, `Drift`, `Ask Dataset`, `Association`, `Research`) require zero modification.
+### ⚠️ Known limitation — ephemeral filesystem
 
-**Cloudflare R2 free tier** (as of 2025):
-- 10 GB storage/month
-- 10 million Class B reads (GET, HEAD) per month
-- 1 million Class A writes (PUT, DELETE) per month
-- No egress fees when accessed via the S3 API from your own application
-- No credit card required for free tier
+**Render's free tier uses an ephemeral filesystem.** This means:
 
----
+- Uploaded dataset files **do NOT survive** redeployments, instance restarts,
+  or container recycling.
+- After any deployment event, MySQL metadata for previously uploaded datasets
+  will still exist, but the physical files will be gone.
+- Features that require the physical file (EDA, AutoML, Ask Dataset, Data Drift,
+  Association Analysis) will return a friendly error:
+  > *"Dataset file is no longer available on the server. This can happen after a
+  > server redeployment. Please re-upload the dataset."*
 
-## 4. Step-by-step: Cloudflare R2 setup
+### What users should do
 
-> ⚠️ **You must do this yourself in the Cloudflare dashboard** — the agent cannot create cloud accounts or buckets on your behalf.
+- **Re-upload datasets** after any deployment or if the error above appears.
+- For a portfolio demo, upload datasets right before showing the application.
+- The MySQL metadata (column definitions, dataset name, etc.) is permanent and
+  never lost.
 
-### 4a. Create a Cloudflare account
+### Why this is acceptable
 
-If you don't have one, go to [dash.cloudflare.com](https://dash.cloudflare.com) and sign up (free).
-
-### 4b. Create an R2 bucket
-
-1. In the Cloudflare dashboard, click **R2 Object Storage** in the left sidebar.
-2. Click **Create bucket**.
-3. Bucket name: `autoscientist-datasets` (or any name you prefer — use the same name in the env var below).
-4. Location: choose the region closest to your users (or leave as default).
-5. Click **Create bucket**.
-
-### 4c. Note your Account ID
-
-Your Account ID is visible in the URL when you are in the R2 dashboard:
-```
-https://dash.cloudflare.com/<ACCOUNT_ID>/r2/...
-```
-Copy this 32-character hex string — you will need it for the endpoint URL.
-
-### 4d. Create an R2 API token
-
-1. In the R2 dashboard, click **Manage R2 API Tokens** (top-right area).
-2. Click **Create API Token**.
-3. Token name: `autoscientist-render` (any descriptive name).
-4. Permissions: **Object Read & Write**.
-5. Bucket: restrict to **Specific bucket** → select `autoscientist-datasets`.
-6. Click **Create API Token**.
-7. **Copy both values immediately** — they are shown only once:
-   - **Access Key ID** → this is `STORAGE_S3_ACCESS_KEY`
-   - **Secret Access Key** → this is `STORAGE_S3_SECRET_KEY`
-
-> ⚠️ Store these in a password manager. They cannot be retrieved again.
+This is a portfolio / demonstration project deployed on free infrastructure.
+The ephemeral limitation does not affect the application's correctness — it is
+a platform constraint of Render's free tier, not a bug.
 
 ---
 
-## 5. Step-by-step: Render environment variables
+## 3. Step-by-step: Render environment variables
 
-> ⚠️ **You must do this in the Render dashboard.** Never paste secrets into chat or commit them to Git.
+> ⚠️ **You must do this in the Render dashboard.** Never commit secrets to Git.
 
 1. Go to [dashboard.render.com](https://dashboard.render.com).
 2. Select your **autoscientist-ai-backend** service.
 3. Click **Environment** in the left menu.
-4. Add or update the following variables:
+4. Verify or set the following variables:
 
 | Variable | Value |
 |----------|-------|
-| `STORAGE_BACKEND` | `s3` |
-| `STORAGE_S3_BUCKET` | `autoscientist-datasets` (your bucket name) |
-| `STORAGE_S3_ENDPOINT` | `https://<YOUR_ACCOUNT_ID>.r2.cloudflarestorage.com` |
-| `STORAGE_S3_REGION` | `auto` |
-| `STORAGE_S3_ACCESS_KEY` | *(your R2 access key ID from step 4d)* |
-| `STORAGE_S3_SECRET_KEY` | *(your R2 secret access key from step 4d)* |
-| `FILE_UPLOAD_DIR` | *(can be removed — it is unused when `STORAGE_BACKEND=s3`)* |
+| `SPRING_PROFILES_ACTIVE` | `mysql` |
+| `SPRING_DATASOURCE_URL` | `jdbc:mysql://<aiven-host>:<port>/<database>?sslMode=REQUIRED&serverTimezone=UTC` |
+| `SPRING_DATASOURCE_USERNAME` | *(your Aiven DB username)* |
+| `SPRING_DATASOURCE_PASSWORD` | *(your Aiven DB password)* |
+| `JWT_SECRET` | *(base64-encoded, ≥ 64 bytes decoded)* |
+| `APP_CORS_ALLOWED_ORIGINS` | `https://auto-scientist-ai-ten.vercel.app` |
+| `FRONTEND_URL` | `https://auto-scientist-ai-ten.vercel.app` |
+| `FILE_UPLOAD_DIR` | `/app/uploads/datasets` *(already set in Dockerfile; optional override)* |
 
-> **Replace `<YOUR_ACCOUNT_ID>`** with the 32-character Account ID from step 4c.
+**Variables to REMOVE (no longer used):**
 
-5. After setting all variables, click **Save Changes**.
-6. Render will automatically trigger a new deployment.
+| Variable | Reason |
+|----------|--------|
+| `STORAGE_BACKEND` | Removed — only local storage exists now |
+| `STORAGE_S3_BUCKET` | Removed — S3 backend was deleted |
+| `STORAGE_S3_ENDPOINT` | Removed |
+| `STORAGE_S3_REGION` | Removed |
+| `STORAGE_S3_ACCESS_KEY` | Removed |
+| `STORAGE_S3_SECRET_KEY` | Removed |
+
+5. Click **Save Changes**. Render will trigger a new deployment.
 
 ### What happens when the backend starts
 
-1. Spring Boot reads `STORAGE_BACKEND=s3`.
-2. `StorageConfig` sees valid S3 credentials and constructs an `S3StorageBackend`.
-3. `FileStorageService` logs: `FileStorageService ready — backend: s3://autoscientist-datasets`
-4. The `GET /api/health/ready` endpoint runs a **HeadBucket** check against R2.
-5. If R2 is reachable, readiness returns `200 UP`.
-
-The container starts successfully **without** any persistent disk mounted, because `docker-entrypoint.sh` skips the local filesystem write-check when `STORAGE_BACKEND=s3`.
+1. `docker-entrypoint.sh` creates `/app/uploads/datasets` and verifies it is writable.
+2. Spring Boot reads `FILE_UPLOAD_DIR=/app/uploads/datasets`.
+3. `StorageConfig` creates a `LocalStorageBackend` pointing at that directory.
+4. `FileStorageService` logs: `FileStorageService ready — backend: local:/app/uploads/datasets`
+5. `GET /api/health/ready` checks MySQL connectivity and upload directory accessibility.
 
 ---
 
-## 6. Step-by-step: GitHub push and merge
+## 4. Step-by-step: GitHub push and merge
 
-The feature branch is already pushed to GitHub. Once you have verified the deployment:
+The feature branch should be pushed to GitHub first:
 
 ```bash
-# Verify branch is up to date
-git log --oneline origin/fix-dataset-storage-reliability | head -5
+# Verify what will be pushed
+git log --oneline origin/fix-dataset-storage-reliability..HEAD
 
-# Option A: Create a Pull Request on GitHub (recommended)
-# → Go to https://github.com/bharad1101/AutoScientist-AI
-# → Click "Compare & pull request" for fix-dataset-storage-reliability
-# → Review → Merge
-
-# Option B: Fast-forward merge locally (only if you have checked it yourself)
-git checkout main
-git merge --ff-only fix-dataset-storage-reliability
-git push origin main
+# Push the branch
+git push origin fix-dataset-storage-reliability
 ```
 
-> ⛔ **Do not force-push. Do not push directly to main without reviewing the diff.**
+Then merge via GitHub Pull Request:
+
+1. Go to https://github.com/bharad1101/AutoScientist-AI
+2. Click **Compare & pull request** for `fix-dataset-storage-reliability`
+3. Review the diff
+4. Merge into `main`
+
+> ⛔ **Do not force-push. Do not push directly to main without reviewing.**
 
 ---
 
-## 7. Vercel — no changes required
+## 5. Vercel — no changes required
 
-The frontend connects to the backend via `VITE_API_BASE_URL` (set at build time in Vercel). The storage change is entirely backend-side. No Vercel changes are needed.
+The frontend connects to the backend via `VITE_API_BASE_URL` (set as a build-time
+environment variable in the Vercel dashboard). The storage simplification is
+entirely backend-side. No Vercel changes are needed.
 
-The frontend has already been improved with:
-- **2-minute upload timeout** (axios) — prevents requests hanging forever
-- **Double-click submit protection** — prevents duplicate uploads
-- **150-second safety timer** — auto-resets the spinner with an informative message if the server never responds
-- **Meaningful error messages** — distinguishes timeout from server errors
+Verify this variable is set in Vercel:
+```
+VITE_API_BASE_URL=https://autoscientist-ai-backend.onrender.com/api
+```
 
 ---
 
-## 8. Post-deployment verification checklist
+## 6. Post-deployment verification checklist
 
-After Render redeploys with the new environment variables:
+After Render redeploys:
 
 - [ ] **Health liveness:** `curl https://autoscientist-ai-backend.onrender.com/api/health`  
-  Expected: `{"success":true,"data":{"status":"UP","timestamp":"..."}}`
+  Expected: `{"success":true,"data":{"status":"UP",...}}`
 
 - [ ] **Health readiness:** `curl https://autoscientist-ai-backend.onrender.com/api/health/ready`  
-  Expected: `{"success":true,"data":{"status":"UP","database":"UP","storage":"UP","storageBackend":"s3://autoscientist-datasets","timestamp":"..."}}`
+  Expected: `{"success":true,"data":{"status":"UP","database":"UP","storage":"UP","storageBackend":"local:/app/uploads/datasets",...}}`
 
-- [ ] **Upload a dataset:** Log in to the frontend → Datasets → Import  
-  Upload a small CSV (e.g., 5 rows × 3 columns). It should complete in < 30 seconds.
+- [ ] **Register / Login:** Create an account or log in at the frontend.
+
+- [ ] **Upload a dataset:** Datasets → Import → Upload a small CSV.
+
+- [ ] **Preview data:** Verify columns and rows display correctly.
 
 - [ ] **Run EDA** on the uploaded dataset.
 
-- [ ] **Trigger a Render manual deploy** (or push a trivial commit).
+- [ ] **Run AutoML** on the uploaded dataset.
 
-- [ ] **After redeploy, open the dataset again** — EDA, AutoML, and Ask Dataset should still work.  
-  This proves the file survived the redeployment (it is stored in R2, not the container disk).
-
-- [ ] **Try AutoML** on the same dataset.
-
-- [ ] **Try Ask Dataset** on the same dataset.
+- [ ] **Try Ask Dataset** on the uploaded dataset.
 
 ---
 
-## 9. How to verify dataset persistence after a redeployment
+## 7. Rollback procedure
 
-This is the key test that proves the storage fix works:
+### If the deployment fails (container won't start)
 
-1. Upload a dataset via the frontend.
-2. Note the dataset ID (visible in the URL, e.g., `/datasets/42`).
-3. Note the `stored_filename` UUID (visible via `GET /api/datasets/42` response, or in the Aiven MySQL console).
-4. In the Render dashboard: **Manual Deploy** → **Deploy latest commit** (or wait for a push-triggered deploy).
-5. Wait for the new container to start (Render health check passes).
-6. Open the dataset in the frontend.
-7. Run EDA or AutoML. If it succeeds, the file was loaded from R2 — **not the container disk**.
-8. Optionally verify in the Cloudflare R2 dashboard: Objects tab → you should see the UUID-named file.
-
-**Before this fix:** step 7 would produce `BadRequestException: File does not exist or access is restricted.`  
-**After this fix:** step 7 succeeds every time.
-
----
-
-## 10. Rollback procedure
-
-### If the deployment fails immediately (container won't start)
-
-1. In Render: **Manual Deploy** → select the previous successful deploy commit hash.
-2. That restores the `main` branch behaviour (local filesystem — files will be lost on next redeploy, but the app will start).
-3. Remove the S3 env vars added in step 5.
-
-### If R2 credentials are wrong (container starts but storage fails)
-
-`GET /api/health/ready` will return `503 DOWN` with `"storage":"DOWN"`.
-
-1. Verify the bucket name, endpoint, access key, and secret key in Render.
-2. Check the Render logs for `S3StorageBackend initialised` — it should log `bucket=autoscientist-datasets, region=auto`.
-3. Verify in Cloudflare: R2 → `autoscientist-datasets` bucket exists and the API token has `Object Read & Write` permission on it.
-4. Update the env vars in Render → Save → the service will redeploy.
+1. In Render: **Manual Deploy** → select the previous successful deploy commit.
+2. That restores the `main` branch behaviour.
 
 ### Git rollback (last resort)
 
 ```bash
-# Revert to main (pre-fix) on the branch — this does NOT alter main
 git revert HEAD --no-edit
 git push origin fix-dataset-storage-reliability
 ```
 
 ---
 
-## 11. Environment variable reference
+## 8. Environment variable reference
 
-These are the **exact** environment variable names used in the source code, verified against `application.yml` and `StorageConfig.java`:
+These are the **exact** environment variable names used in the source code,
+verified against `application.yml` and `StorageConfig.java`:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `STORAGE_BACKEND` | No | `local` | `s3` or `local` |
-| `STORAGE_S3_BUCKET` | If S3 | — | R2 bucket name |
-| `STORAGE_S3_ENDPOINT` | If S3 | — | `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` |
-| `STORAGE_S3_REGION` | If S3 | `auto` | Use `auto` for Cloudflare R2 |
-| `STORAGE_S3_ACCESS_KEY` | If S3 | — | R2 Access Key ID |
-| `STORAGE_S3_SECRET_KEY` | If S3 | — | R2 Secret Access Key |
-| `FILE_UPLOAD_DIR` | If local | `/app/uploads/datasets` | Local filesystem path; unused when S3 |
-| `SPRING_DATASOURCE_URL` | Yes | — | Aiven MySQL JDBC URL |
-| `SPRING_DATASOURCE_USERNAME` | Yes | — | DB username |
-| `SPRING_DATASOURCE_PASSWORD` | Yes | — | DB password |
-| `JWT_SECRET` | Yes | — | Base64-encoded JWT signing key (≥ 64 bytes) |
-| `APP_CORS_ALLOWED_ORIGINS` | Yes | — | e.g. `https://auto-scientist-ai-ten.vercel.app` |
-| `FRONTEND_URL` | Yes | — | e.g. `https://auto-scientist-ai-ten.vercel.app` |
-
-> When `STORAGE_BACKEND=s3`, setting `FILE_UPLOAD_DIR` is **optional** — if omitted it defaults to `/app/uploads/datasets` which is never used.
+| `FILE_UPLOAD_DIR` | No | `/app/uploads/datasets` (Docker) | Local filesystem path for dataset files |
+| `SPRING_DATASOURCE_URL` | Yes (mysql) | — | Aiven MySQL JDBC URL |
+| `SPRING_DATASOURCE_USERNAME` | Yes (mysql) | — | DB username |
+| `SPRING_DATASOURCE_PASSWORD` | Yes (mysql) | — | DB password |
+| `JWT_SECRET` | Yes (mysql) | — | Base64-encoded JWT signing key (≥ 64 bytes) |
+| `APP_CORS_ALLOWED_ORIGINS` | Yes (mysql) | — | e.g. `https://auto-scientist-ai-ten.vercel.app` |
+| `FRONTEND_URL` | Yes | `http://localhost:5173` | Password reset redirect base URL |
+| `SPRING_PROFILES_ACTIVE` | Yes | `dev` | Use `mysql` for production |
+| `PORT` | No | `8080` | HTTP listen port |
 
 ---
 
-## 12. Security notes
+## 9. Security notes
 
 - ✅ No credentials are hardcoded in any source file.
-- ✅ No credentials appear in Git history (`git log -p | grep -i "secret\|access.key\|password"` returns nothing from the storage code).
-- ✅ `S3StorageBackend` logs only `bucket` and `region` at startup — **never** logs endpoint, access key, or secret key.
-- ✅ Exception messages are sanitised before logging to remove potential credential fragments.
-- ✅ R2 API token should be scoped to a **single bucket** with **Object Read & Write** only — do not use account-level tokens.
-- ✅ Path traversal protection is enforced: keys containing `..`, `/`, or `\` are rejected before hitting the storage backend.
+- ✅ No S3/R2 secrets exist anywhere in the codebase.
+- ✅ `.env` files are excluded from Git via `.gitignore`.
+- ✅ Path traversal protection is enforced: keys containing `..`, `/`, or `\` are rejected.
 - ✅ File type validation: only `.csv`, `.xls`, `.xlsx` are accepted.
 - ✅ File size limit: 50 MB (Spring multipart config in `application.yml`).
 - ✅ JWT and authentication configuration is unchanged.
 - ✅ CORS configuration is unchanged.
-- ✅ `.env` files are excluded from Git via `.gitignore`.
 
 ---
 
-## 13. Changed files summary
+## 10. Changed files summary
 
-All changes are on branch `fix-dataset-storage-reliability`. No changes to `main`.
+All changes are on branch `fix-dataset-storage-reliability` relative to `main`.
 
 | File | Change |
 |------|--------|
-| `backend/pom.xml` | Added `software.amazon.awssdk:s3:2.31.60` dependency |
-| `backend/src/main/java/.../util/StorageBackend.java` | Added `checkAccessible()` to interface (non-destructive health probe) |
-| `backend/src/main/java/.../util/LocalStorageBackend.java` | Implemented `checkAccessible()` via directory stat |
-| `backend/src/main/java/.../util/S3StorageBackend.java` | Implemented `checkAccessible()` via HeadBucket; sanitised error logs |
-| `backend/src/main/java/.../config/StorageConfig.java` | New `@Bean` that selects local vs S3 based on env vars |
-| `backend/src/main/java/.../util/FileStorageService.java` | Delegating implementation; `isHealthy()` now uses non-destructive `checkAccessible()` |
-| `backend/src/main/java/.../controller/HealthController.java` | `/api/health/ready` checks DB + storage; returns `storageBackend` description |
-| `backend/src/main/resources/application.yml` | Added `app.storage.*` config; gave `FILE_UPLOAD_DIR` a safe default in mysql profile |
-| `backend/docker-entrypoint.sh` | Skips writability check when `STORAGE_BACKEND=s3` |
-| `backend/.env.example` | Full documentation of all storage env vars with setup instructions |
-| `backend/src/test/java/.../StorageBackendTest.java` | 14 tests covering storage interface, health, path-traversal, non-destructive probe |
-| `frontend/src/services/datasetService.js` | Upload timeout 120s; preview timeout 60s |
-| `frontend/src/components/ImportWizard.jsx` | Double-click guard; 150s safety timer; meaningful error messages |
+| `backend/pom.xml` | **Removed** `software.amazon.awssdk:s3` dependency |
+| `backend/src/.../util/S3StorageBackend.java` | **Deleted** — S3 backend removed |
+| `backend/src/.../config/StorageConfig.java` | Simplified to local-only (removed S3 selection logic) |
+| `backend/src/.../util/StorageBackend.java` | Cleaned javadoc (removed S3 references) |
+| `backend/src/.../util/FileStorageService.java` | Cleaned javadoc (removed S3 references) |
+| `backend/src/main/resources/application.yml` | **Removed** `app.storage.*` config block (S3 keys) |
+| `backend/docker-entrypoint.sh` | Simplified: removed `STORAGE_BACKEND` check and S3 bypass |
+| `backend/.env.example` | Rewritten for local-only storage with ephemeral limitation note |
+| `Dockerfile` | Removed misleading `VOLUME ["/app/uploads"]` directive |
+| `DEPLOYMENT_GUIDE.md` | Rewritten for Render local-only architecture |
+
+Files **unchanged** from `main` (verified correct as-is):
+
+| File | Reason |
+|------|--------|
+| `backend/src/.../util/LocalStorageBackend.java` | Already implements local storage correctly |
+| `backend/src/.../controller/HealthController.java` | Already reports local storage health |
+| `frontend/` (all files) | No storage-related changes needed |
 
 ---
 
-## 14. Test results
+## 11. Test results
 
-Verified on commit in branch `fix-dataset-storage-reliability`:
+Verified locally after all S3 removal changes:
 
 | Check | Result |
 |-------|--------|
@@ -322,6 +262,6 @@ Verified on commit in branch `fix-dataset-storage-reliability`:
 | `./mvnw clean package` | ✅ **BUILD SUCCESS** — `autoscientist-backend-1.0.0-SNAPSHOT.jar` |
 | `npm run build` | ✅ **129 modules, 0 errors** |
 | Secret scan | ✅ No hardcoded credentials |
-| R2 live integration test | ⚠️ **Not run** — requires live R2 credentials. Verify via the readiness endpoint after deploying. |
 
-The 2 skipped tests are `PasswordResetIntegrationTest` variants that require SMTP transport — expected and unchanged from the main branch.
+The 2 skipped tests are `PasswordResetIntegrationTest` variants that require
+SMTP transport — expected and unchanged from the `main` branch.
