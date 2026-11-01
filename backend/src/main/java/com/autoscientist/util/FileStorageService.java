@@ -126,15 +126,16 @@ public class FileStorageService {
 
     // ---- Health ----
 
-    /** Returns {@code true} if the storage backend is reachable and writable. */
+    /**
+     * Non-destructive connectivity check: returns {@code true} if the storage
+     * backend is reachable and its bucket/directory is accessible.
+     *
+     * <p>Uses a HeadBucket call (S3) or a directory stat (local filesystem) —
+     * no objects are created or deleted during a readiness probe.</p>
+     */
     public boolean isHealthy() {
         try {
-            String probeKey = ".health-probe-" + UUID.randomUUID();
-            byte[] data = "ok".getBytes();
-            storageBackend.store(probeKey, new ByteArrayInputStream(data), data.length);
-            boolean ok = storageBackend.exists(probeKey);
-            storageBackend.delete(probeKey);
-            return ok;
+            return storageBackend.checkAccessible();
         } catch (Exception e) {
             log.warn("Storage health check failed: {}", e.getMessage());
             return false;

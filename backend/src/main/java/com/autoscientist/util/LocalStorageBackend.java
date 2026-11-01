@@ -65,6 +65,15 @@ public class LocalStorageBackend implements StorageBackend {
         }
     }
 
+    /**
+     * Non-destructive health check: verifies the base directory exists and
+     * is writable. Does not create or delete any user-visible objects.
+     */
+    @Override
+    public boolean checkAccessible() {
+        return Files.isDirectory(baseDir) && Files.isWritable(baseDir);
+    }
+
     @Override
     public String describe() {
         return "local:" + baseDir;

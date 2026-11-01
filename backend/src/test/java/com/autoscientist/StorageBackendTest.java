@@ -88,6 +88,12 @@ class StorageBackendTest {
         assertTrue(desc.startsWith("local:"));
     }
 
+    @Test
+    @DisplayName("checkAccessible() returns true for a valid local backend")
+    void checkAccessibleLocal() {
+        assertTrue(backend.checkAccessible(), "LocalStorageBackend should report accessible for a writable temp dir");
+    }
+
     // ---- FileStorageService integration tests ----
 
     @Test
@@ -121,9 +127,19 @@ class StorageBackendTest {
     }
 
     @Test
-    @DisplayName("isHealthy returns true for writable backend")
-    void healthCheckPasses() {
+    @DisplayName("isHealthy uses non-destructive check and returns true for accessible backend")
+    void healthCheckNonDestructive() {
+        // Count objects in tempDir before
+        java.io.File[] before = tempDir.toFile().listFiles();
+        int countBefore = before == null ? 0 : before.length;
+
         assertTrue(fileStorageService.isHealthy());
+
+        // isHealthy must NOT create any new files (non-destructive)
+        java.io.File[] after = tempDir.toFile().listFiles();
+        int countAfter = after == null ? 0 : after.length;
+        assertEquals(countBefore, countAfter,
+                "isHealthy must not create or leave any probe files");
     }
 
     @Test
@@ -160,5 +176,13 @@ class StorageBackendTest {
         assertTrue(fileStorageService.storeBytes(data, "wb.xlsx").endsWith(".xlsx"));
         assertTrue(fileStorageService.storeBytes(data, "wb.xls").endsWith(".xls"));
         assertTrue(fileStorageService.storeBytes(data, "data.csv").endsWith(".csv"));
+    }
+
+    @Test
+    @DisplayName("getBackendDescription returns the backend describe() string")
+    void backendDescriptionDelegates() {
+        String desc = fileStorageService.getBackendDescription();
+        assertNotNull(desc);
+        assertEquals(backend.describe(), desc);
     }
 }

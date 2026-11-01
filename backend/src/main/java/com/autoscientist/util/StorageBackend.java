@@ -42,6 +42,15 @@ public interface StorageBackend {
      */
     boolean exists(String key);
 
+    /**
+     * Non-destructive connectivity check. Returns {@code true} if the backend
+     * is reachable and the configured bucket/directory is accessible.
+     *
+     * <p>Implementations must NOT create or delete any user-visible objects.
+     * Use a bucket HEAD request (S3) or a directory stat (local filesystem).</p>
+     */
+    boolean checkAccessible();
+
     /** A short human-readable description of this backend (e.g. "local:/app/uploads" or "s3://bucket"). */
     String describe();
 }

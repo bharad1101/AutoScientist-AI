@@ -14,7 +14,7 @@ import java.net.URI;
  * S3-compatible service.
  *
  * <p>Configuration is injected at construction time; no credentials or
- * endpoints are ever hardcoded.</p>
+ * endpoints are ever hardcoded or logged.</p>
  */
 @Slf4j
 public class S3StorageBackend implements StorageBackend {
@@ -23,9 +23,9 @@ public class S3StorageBackend implements StorageBackend {
     private final String bucket;
 
     /**
-     * @param bucket   Bucket name.
-     * @param endpoint S3-compatible endpoint URI, or {@code null} for AWS default.
-     * @param region   AWS region (e.g. "auto" for R2, "us-east-1" for AWS).
+     * @param bucket    Bucket name.
+     * @param endpoint  S3-compatible endpoint URI, or {@code null} for AWS default.
+     * @param region    AWS region (use "auto" for Cloudflare R2, "us-east-1" for AWS).
      * @param accessKey Access key ID.
      * @param secretKey Secret access key.
      */
@@ -37,7 +37,9 @@ public class S3StorageBackend implements StorageBackend {
                 .region(software.amazon.awssdk.regions.Region.of(region))
                 .credentialsProvider(
                         software.amazon.awssdk.auth.credentials.StaticCredentialsProvider.create(
-                                software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create(accessKey, secretKey)))
+                                software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create(
+                                        accessKey, secretKey)))
+                // Cloudflare R2 requires path-style access; harmless for AWS.
                 .forcePathStyle(true);
 
         if (endpoint != null && !endpoint.isBlank()) {
@@ -46,7 +48,8 @@ public class S3StorageBackend implements StorageBackend {
 
         this.s3 = builder.build();
 
-        log.info("S3 storage backend ready: bucket={}, endpoint={}, region={}", bucket, endpoint, region);
+        // Log bucket name and region only — never log credentials or full endpoint.
+        log.info("S3StorageBackend initialised: bucket={}, region={}", bucket, region);
     }
 
     @Override
@@ -60,9 +63,9 @@ public class S3StorageBackend implements StorageBackend {
                     .build();
             s3.putObject(putRequest,
                     software.amazon.awssdk.core.sync.RequestBody.fromBytes(bytes));
-            log.debug("S3: stored {} ({} bytes)", key, bytes.length);
+            log.debug("S3: stored object key={}, size={} bytes", key, bytes.length);
         } catch (Exception e) {
-            throw new IOException("Failed to store object in S3: " + key, e);
+            throw new IOException("Failed to upload to S3 storage: " + sanitise(e.getMessage()), e);
         }
     }
 
@@ -74,11 +77,12 @@ public class S3StorageBackend implements StorageBackend {
                     .key(key)
                     .build();
             byte[] bytes = s3.getObjectAsBytes(getRequest).asByteArray();
+            log.debug("S3: retrieved object key={}, size={} bytes", key, bytes.length);
             return new ByteArrayInputStream(bytes);
         } catch (software.amazon.awssdk.services.s3.model.NoSuchKeyException e) {
-            throw new IOException("Object not found in S3: " + key);
+            throw new IOException("Object not found in S3 storage: " + key);
         } catch (Exception e) {
-            throw new IOException("Failed to retrieve object from S3: " + key, e);
+            throw new IOException("Failed to retrieve from S3 storage: " + sanitise(e.getMessage()), e);
         }
     }
 
@@ -90,8 +94,9 @@ public class S3StorageBackend implements StorageBackend {
                     .key(key)
                     .build();
             s3.deleteObject(deleteRequest);
+            log.debug("S3: deleted object key={}", key);
         } catch (Exception e) {
-            log.warn("S3: failed to delete {}: {}", key, e.getMessage());
+            log.warn("S3: failed to delete key={}: {}", key, sanitise(e.getMessage()));
         }
     }
 
@@ -107,7 +112,30 @@ public class S3StorageBackend implements StorageBackend {
         } catch (software.amazon.awssdk.services.s3.model.NoSuchKeyException e) {
             return false;
         } catch (Exception e) {
-            log.warn("S3: exists check failed for {}: {}", key, e.getMessage());
+            log.warn("S3: exists check failed for key={}: {}", key, sanitise(e.getMessage()));
+            return false;
+        }
+    }
+
+    /**
+     * Non-destructive connectivity check using HeadBucket.
+     * Does NOT create or delete any objects. Returns {@code true} if the bucket
+     * is reachable and the credentials have at least list/head access.
+     */
+    @Override
+    public boolean checkAccessible() {
+        try {
+            var headBucketRequest = software.amazon.awssdk.services.s3.model.HeadBucketRequest
+                    .builder()
+                    .bucket(bucket)
+                    .build();
+            s3.headBucket(headBucketRequest);
+            return true;
+        } catch (software.amazon.awssdk.services.s3.model.NoSuchBucketException e) {
+            log.warn("S3 health: bucket '{}' does not exist", bucket);
+            return false;
+        } catch (Exception e) {
+            log.warn("S3 health: bucket check failed: {}", sanitise(e.getMessage()));
             return false;
         }
     }
@@ -115,5 +143,16 @@ public class S3StorageBackend implements StorageBackend {
     @Override
     public String describe() {
         return "s3://" + bucket;
+    }
+
+    /**
+     * Strips potential credential fragments from exception messages before logging.
+     * Removes anything that looks like an AWS credential (26-char uppercase strings)
+     * and query-string auth parameters.
+     */
+    private static String sanitise(String msg) {
+        if (msg == null) return "unknown error";
+        return msg.replaceAll("[A-Z0-9]{20,}", "***")
+                  .replaceAll("(?i)(x-amz-credential|authorization)[^,&\\s]*", "***");
     }
 }
