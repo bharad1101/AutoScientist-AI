@@ -135,23 +135,25 @@ const LoginPage = () => {
               </button>
             </form>
 
-            <div className="mt-3 p-3 bg-light rounded-3 border text-muted small">
-              <div className="fw-semibold text-dark mb-1 d-flex align-items-center justify-content-between">
-                <span><i className="bi bi-info-circle me-1"></i> Demo Credentials</span>
-                <button
-                  type="button"
-                  className="btn btn-sm btn-outline-primary py-0 px-2"
-                  style={{ fontSize: '0.75rem' }}
-                  onClick={() => {
-                    setEmail('jane@university.edu');
-                    setPassword('SecurePassword123!');
-                  }}
-                >
-                  Quick Fill
-                </button>
+            {import.meta.env.DEV && (
+              <div className="mt-3 p-3 bg-light rounded-3 border text-muted small">
+                <div className="fw-semibold text-dark mb-1 d-flex align-items-center justify-content-between">
+                  <span><i className="bi bi-info-circle me-1"></i> Local Development Credentials</span>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-primary py-0 px-2"
+                    style={{ fontSize: '0.75rem' }}
+                    onClick={() => {
+                      setEmail('jane@university.edu');
+                      setPassword('SecurePassword123!');
+                    }}
+                  >
+                    Quick Fill
+                  </button>
+                </div>
+                <div className="font-monospace text-secondary">jane@university.edu / SecurePassword123!</div>
               </div>
-              <div className="font-monospace text-secondary">jane@university.edu / SecurePassword123!</div>
-            </div>
+            )}
 
             <div className="text-center mt-4 pt-3 border-top">
               <span className="text-muted small">Don't have an account yet? </span>

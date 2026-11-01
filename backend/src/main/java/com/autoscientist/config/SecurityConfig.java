@@ -83,6 +83,7 @@ public class SecurityConfig {
                 auth.requestMatchers(
                     "/",
                     "/api/health",
+                    "/api/health/ready",
                     "/api/auth/**",
                     "/error"
                 ).permitAll();

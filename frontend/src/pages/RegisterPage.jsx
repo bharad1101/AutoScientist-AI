@@ -33,6 +33,11 @@ const RegisterPage = () => {
       return;
     }
 
+    if (new TextEncoder().encode(password).length > 72) {
+      setError('Password must be at most 72 bytes (UTF-8).');
+      return;
+    }
+
     setSubmitting(true);
     try {
       await register(name.trim(), email.trim(), password);

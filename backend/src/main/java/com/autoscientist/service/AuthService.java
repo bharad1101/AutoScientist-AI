@@ -10,6 +10,7 @@ import com.autoscientist.exception.ResourceNotFoundException;
 import com.autoscientist.repository.UserRepository;
 import com.autoscientist.security.JwtUtils;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -18,9 +19,15 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+
 @Service
 @RequiredArgsConstructor
 public class AuthService {
+
+    /** BCrypt only consumes the first 72 bytes; reject longer inputs explicitly. */
+    private static final int BCRYPT_MAX_PASSWORD_BYTES = 72;
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -29,13 +36,15 @@ public class AuthService {
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
-        String rawEmail = request.getEmail() != null ? request.getEmail().trim() : "";
-        String normalizedEmail = rawEmail.toLowerCase();
+        if (request.getPassword() != null
+                && request.getPassword().getBytes(StandardCharsets.UTF_8).length > BCRYPT_MAX_PASSWORD_BYTES) {
+            throw new BadRequestException("Password must be at most 72 bytes (UTF-8).");
+        }
 
-        if (userRepository.existsByEmail(request.getEmail()) ||
-                (!rawEmail.isEmpty() && userRepository.existsByEmail(rawEmail)) ||
-                (!normalizedEmail.isEmpty() && userRepository.existsByEmailIgnoreCase(normalizedEmail))) {
-            throw new BadRequestException("Email is already registered: " + request.getEmail());
+        String normalizedEmail = normalizeEmail(request.getEmail());
+
+        if (userRepository.existsByEmailIgnoreCase(normalizedEmail)) {
+            throw new BadRequestException("Email is already registered: " + normalizedEmail);
         }
 
         User user = User.builder()
@@ -45,7 +54,13 @@ public class AuthService {
                 .role("ROLE_USER")
                 .build();
 
-        user = userRepository.save(user);
+        try {
+            // Flush now so a concurrent duplicate registration surfaces here as a
+            // 400 instead of an opaque 500 at transaction commit.
+            user = userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException ex) {
+            throw new BadRequestException("Email is already registered: " + normalizedEmail);
+        }
 
         String token = jwtUtils.generateTokenFromUsername(user.getEmail());
 
@@ -58,7 +73,7 @@ public class AuthService {
 
     public AuthResponse login(LoginRequest request) {
         String rawEmail = request.getEmail() != null ? request.getEmail().trim() : "";
-        String normalizedEmail = rawEmail.toLowerCase();
+        String normalizedEmail = normalizeEmail(rawEmail);
 
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(
@@ -70,7 +85,7 @@ public class AuthService {
         SecurityContextHolder.getContext().setAuthentication(authentication);
         String token = jwtUtils.generateJwtToken(authentication);
 
-        User user = userRepository.findByEmail(request.getEmail().trim().toLowerCase())
+        User user = userRepository.findByEmail(normalizedEmail)
                 .or(() -> userRepository.findByEmailIgnoreCase(normalizedEmail))
                 .or(() -> userRepository.findByEmail(rawEmail))
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -84,21 +99,25 @@ public class AuthService {
 
     @Transactional(readOnly = true)
     public UserDto getCurrentUser(String email) {
-        String normalized = email != null ? email.trim().toLowerCase() : "";
-        User user = userRepository.findByEmail(email)
-                .or(() -> userRepository.findByEmailIgnoreCase(normalized))
-                .or(() -> userRepository.findByEmail(normalized))
-                .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + email));
+        User user = findUserByEmail(email);
         return mapToDto(user);
     }
 
     @Transactional(readOnly = true)
     public User getCurrentUserEntity(String email) {
-        String normalized = email != null ? email.trim().toLowerCase() : "";
+        return findUserByEmail(email);
+    }
+
+    private User findUserByEmail(String email) {
+        String normalized = normalizeEmail(email);
         return userRepository.findByEmail(email)
                 .or(() -> userRepository.findByEmailIgnoreCase(normalized))
                 .or(() -> userRepository.findByEmail(normalized))
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + email));
+    }
+
+    private String normalizeEmail(String email) {
+        return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
     }
 
     public UserDto mapToDto(User user) {

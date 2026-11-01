@@ -118,7 +118,7 @@ migrations on application startup.
   H2 accepts but real MySQL rejects (e.g. `CREATE INDEX IF NOT EXISTS`).
 - **Validated migration scenarios** (recorded in `docs/IMPLEMENTATION_PROGRESS.md`):
   fresh install (V1–V4, Hibernate `validate`), legacy pre-Flyway database
-  (baseline@1 + V2–V4 + `update`, data preserved), restart idempotency.
+  (baseline@1 + V2–V4 + Hibernate `validate`, data preserved), restart idempotency.
 - **Rollback / recovery**: migrations are additive-only, so recovery from a
   failed migration is (1) restore the pre-start backup (see §3.3), (2) `java -jar
   ... repair` equivalent via a one-off Flyway repair if a migration half-applied

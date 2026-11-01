@@ -118,8 +118,10 @@ class RealMysqlMigrationTest {
                         "--spring.profiles.active=mysql",
                         "--spring.main.banner-mode=off",
                         "--spring.datasource.url=" + schemaUrl,
+                        "--spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver",
                         "--spring.datasource.username=" + USER,
                         "--spring.datasource.password=" + PASSWORD,
+                        "--spring.jpa.database-platform=org.hibernate.dialect.MySQLDialect",
                         "--spring.flyway.enabled=true",
                         "--spring.jpa.hibernate.ddl-auto=validate",
                         "--app.jwt.secret=" + java.util.Base64.getEncoder().encodeToString(new byte[64]),
@@ -180,8 +182,11 @@ class RealMysqlMigrationTest {
                             + "DROP COLUMN effect_size_ci_lower, DROP COLUMN effect_size_ci_upper",
                     "ALTER TABLE statistical_tests DROP COLUMN ci_lower, DROP COLUMN ci_upper, DROP COLUMN ci_level, "
                             + "DROP COLUMN ci_method, DROP COLUMN ci_target, DROP COLUMN ci_unavailable_reason",
+                    "ALTER TABLE data_quality_reports DROP FOREIGN KEY fk_quality_dataset",
                     "ALTER TABLE data_quality_reports DROP INDEX uq_quality_dataset",
-                    "DROP TABLE analysis_runs, drift_snapshots, password_reset_tokens",
+                    "ALTER TABLE data_quality_reports ADD CONSTRAINT fk_quality_dataset "
+                            + "FOREIGN KEY (dataset_id) REFERENCES datasets (id)",
+                    "DROP TABLE IF EXISTS analysis_runs, drift_snapshots, password_reset_tokens",
                     "DROP TABLE flyway_schema_history",
                     "INSERT INTO users (email,name,password,role) VALUES "
                             + "('legacy@example.com','Legacy','$2a$10$abcdefghijklmnopqrstuvABCDEFGHIJKLMNOPQRSTUVWXYZ012345','ROLE_USER')",

@@ -9,6 +9,8 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Locale;
+
 @Service
 @RequiredArgsConstructor
 public class UserDetailsServiceImpl implements UserDetailsService {
@@ -21,7 +23,7 @@ public class UserDetailsServiceImpl implements UserDetailsService {
         if (email == null || email.isBlank()) {
             throw new UsernameNotFoundException("Email cannot be empty");
         }
-        String normalizedEmail = email.trim().toLowerCase();
+        String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
         User user = userRepository.findByEmail(email)
                 .or(() -> userRepository.findByEmail(normalizedEmail))
                 .or(() -> userRepository.findByEmailIgnoreCase(normalizedEmail))

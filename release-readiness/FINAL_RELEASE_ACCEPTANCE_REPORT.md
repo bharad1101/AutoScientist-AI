@@ -1,88 +1,119 @@
 # AutoScientist AI — Final Release Acceptance
 
-**Date:** 2026-10-30
-**Repository:** `/Applications/AutoScientist AI`
-**Starting commit:** `d13e6c6` (preserved; no amend/reset)
-**Production services:** Vercel frontend and Render backend URLs supplied by the user
-**Overall decision:** **NOT READY TO PUSH** as a verified production release. A real Flyway/MySQL 8.4 staging run and external service configuration checks remain unavailable. No production mutation, push, or deployment was performed.
+- **Date:** 2026-10-31
+- **Repository:** `/Applications/AutoScientist AI`
+- **Production baseline:** `d13e6c6`
+- **Local candidate:** `8b4cf87` plus uncommitted release fixes
+- **Production services:** Vercel frontend and Render backend
+**Overall decision:** **CONDITIONAL — NOT READY TO PUSH/DEPLOY WITHOUT APPROVAL.** The technical candidate passes local unit, integration, real-MySQL, frontend, production-bundle, auth, feature, and isolation checks. Authenticated production smoke testing and provider dashboard verification remain incomplete. No commit, push, deployment, or production mutation was performed.
 
-## Repository issues found and fixed
+## Changes in this pass
 
-| Issue | Fix | Classification |
+| Issue | Fix | Status |
 |---|---|---|
-| Spring Boot 3.5.16 managed Flyway 11.7.2, which predates explicit MySQL 8.4 support and emits an unsupported/newer-server warning. | Pinned the Flyway BOM property to 11.15.0. `dependency:tree` confirms both `flyway-core` and `flyway-mysql` resolve to 11.15.0. | **Fixed and verified locally** |
-| Commons Lang 3.17.0 had CVE-2025-48924. | Dependency management pins Commons Lang 3.18.0. | **Fixed and verified by OSV scan** |
-| Reset token was retained when email delivery failed. | Reset service removes the unusable token while preserving a generic public response. Unit/integration tests cover missing transport, success, delivery failure, and token cleanup. | **Fixed and verified locally** |
-| MySQL migration test could use unsafe fixed schemas and non-TLS connections. | Test now requires an explicit staging marker and create/drop opt-in, creates unique disposable schemas, enforces TLS, drops only schemas it created, and starts the app with Hibernate schema validation for fresh and legacy paths. | **Fixed and verified by compilation/local suite; real DB paths not run** |
-| Deployment documentation contained an unencrypted MySQL example and manual root schema initialization that conflicted with production Flyway. | Replaced with Aiven TLS and Flyway-owned production migration instructions. Added native Render/Vercel branch deployment setup. | **Fixed and verified by repository inspection** |
+| Production login page displayed development demo credentials and a Quick Fill button that only work in the dev profile. | Render the demo block only when `import.meta.env.DEV` is true; label it as local development. | Fixed and verified in a production bundle. |
+| Registration passwords longer than BCrypt’s 72-byte limit produced a confusing 400 message. | Reject over-72-byte UTF-8 passwords in `AuthService` and `RegisterPage` with a clear message. | Fixed and verified locally. |
+| Email normalization used the default locale. | Use `Locale.ROOT` in registration, login, current-user lookup, and authentication lookup. | Fixed and covered by tests. |
+| Concurrent duplicate registration could surface as an opaque 500 at commit. | Use `saveAndFlush` and translate `DataIntegrityViolationException` to a clear 400. | Fixed and covered by tests. |
+| `/api/health` proves process liveness but not database connectivity. | Add `/api/health/ready`, which runs `SELECT 1` and returns 200/503 without connection details. Allow it publicly. | Fixed and verified locally. |
+| Real-MySQL test inherited H2 driver/dialect from test resources. | Pass the MySQL driver and dialect explicitly when starting the validation context. | Fixed; real-MySQL tests now pass. |
+| Legacy migration test dropped a unique index still required by a foreign key and dropped nonexistent tables. | Drop the foreign key first, then the index, re-add the foreign key, and use `DROP TABLE IF EXISTS`. | Fixed; real-MySQL tests now pass. |
 
-No migrations were deleted or changed. No features were removed or replaced with mocks.
+No migrations were deleted or rewritten. No features were removed or replaced with mocks.
 
 ## Verification results
 
-| Area | Result and classification |
+| Area | Result |
 |---|---|
-| Backend Maven `verify` after Flyway upgrade | **PASS — verified locally:** 110 tests, 0 failures, 0 errors, 2 skipped staging-only real-MySQL tests; package build succeeded. |
-| Flyway resolved artifacts | **PASS — verified locally:** `flyway-core:11.15.0` and `flyway-mysql:11.15.0`. |
-| Frontend tests | **PASS — verified locally:** 21 test files, 126 tests. |
-| Frontend production build | **PASS — verified locally:** built with `VITE_API_BASE_URL=https://autoscientist-ai-backend.onrender.com/api`. |
-| Frontend dependency audit | **PASS — verified locally:** `npm audit` reports 0 advisories. |
-| Backend dependency scan | **Completed with findings:** OSV scan of the updated Maven POM reports two Spring Framework 6.2.19 advisories concerning SSE fragment rendering and `XsltView` path limitation. Source scan found no SSE emitter, `text/event-stream`, `XsltView`, or view resolver usage in this REST application; these code paths are not present. The Commons Lang advisory is no longer reported. OWASP Dependency-Check did not produce a report because NVD rejected the unavailable API key. |
-| Production backend health | **PASS — verified against production:** `GET /api/health` returned HTTP 200 with status `UP`; this endpoint is process liveness and does not prove Aiven connectivity. |
-| Production frontend and deep route | **PASS — verified against production:** `/` and `/dashboard` returned HTTP 200 with the SPA document. |
-| Production API bundle | **PASS — verified against production:** downloaded JavaScript bundle contains the supplied HTTPS Render `/api` base URL. |
-| Production CORS | **PASS — verified against production:** preflight returned HTTP 200 and allowed the exact Vercel origin plus Authorization/content-type headers. |
-| Production authorization boundary | **PASS — verified against production:** unauthenticated `/api/datasets` returned HTTP 401. No authenticated account was used. |
-| Production authenticated workflows | **Not verified:** no production registration/login/upload/report/reset data was created. No staging API or safe test accounts were available. |
-| Production database connectivity/schema | **Not verified:** no production SQL, migration, or data operation was performed. `/api/health` does not test the datasource. |
-| GitHub remote state | **PASS — verified:** repository started clean at `d13e6c6`; `main` equals `origin/main`. No push was performed. |
+| Backend test suite | **PASS locally:** 114 tests, 0 failures, 0 errors, 2 skipped without env. |
+| Real-MySQL migration tests | **PASS locally:** 2/2 on disposable MySQL 9.7.1 with TLS, fresh and legacy paths. |
+| Java 17 package | **PASS locally:** executable JAR built. |
+| Frontend tests | **PASS locally:** 21 files, 126 tests. |
+| Frontend production build | **PASS locally** with `VITE_API_BASE_URL=https://autoscientist-ai-backend.onrender.com/api`. |
+| Production bundle safety | **PASS:** no demo credentials, no local-development credential block, no localhost API URL. |
+| Local readiness | **PASS:** `/api/health/ready` returns 200 with `database=UP`. |
+| Local auth regressions | **PASS:** over-72-byte password 400, duplicate 400, normalized login 200, invalid token 401. |
+| Local cross-user isolation | **PASS:** 403 for another user’s dataset, quality report, report, and PDF. |
+| Local feature smoke | **PASS:** upload, profiling, quality, EDA, associations, dashboard, research, AutoML, fairness, explanation, what-if, drift, reports, CSV/Excel/Markdown/PDF. |
+| Live backend health | **PASS:** HTTP 200 `status=UP` over HTTP/1.1. HTTP/2 timed out and is recorded as a transport anomaly. |
+| Live frontend | **PASS:** production origin 200; bundle uses the Render `/api` URL. |
+| Live CORS | **PASS:** exact frontend origin allowed; unapproved origin 403. |
+| Live unauthenticated boundary | **PASS:** protected endpoints return 401. |
+| Live authenticated workflows | **NOT RUN:** no production account or approved test data. |
+| Actual Aiven database | **NOT VERIFIED:** no provider access. |
+| Render configuration | **NOT VERIFIED:** no provider access. |
+| Vercel configuration | **PARTIAL:** GitHub status and live bundle only. |
+| Docker image build | **BLOCKED:** Docker daemon unavailable. |
+| SMTP/password-reset delivery | **NOT VERIFIED:** no production SMTP access. |
 
 ## Database migration and TLS
 
-- Repository has migrations V1–V4. Production Flyway has `baseline-on-migrate=true`, baseline version 1, checksum validation, and Hibernate `ddl-auto=validate`; fresh schemas apply V1–V4 and pre-Flyway schemas baseline at V1 before applying V2–V4.
-- Flyway was updated to 11.15.0. Flyway's MySQL support guidance lists versions through 9.4, so its MySQL 8.4 “newer than tested” warning is addressed by the version bump. This does not replace an actual migration run against MySQL 8.4. [Flyway support issue/version confirmation](https://github.com/flyway/flyway/issues/4168), [Flyway MySQL driver reference](https://documentation.red-gate.com/flyway/reference/database-driver-reference/mysql).
-- MySQL Connector/J 9.7 is compatible with supported MySQL server versions; connector support is distinct from Flyway migration validation. [MySQL Connector/J compatibility](https://dev.mysql.com/doc/connector-j/en/connector-j-versions.html).
-- JDBC must use `sslMode=REQUIRED` or preferably `VERIFY_CA`/`VERIFY_IDENTITY` with Aiven CA trust configured. `REQUIRED` encrypts traffic but does not verify the server certificate.
-- **Staging migration result:** not run. No `AS_TEST_MYSQL_*` credentials were available; Docker was unavailable; the installed MySQL 9.7.1 local server was not running. A temporary isolated initialization attempt crashed inside `mysqld` before accepting connections. No production or existing local database was touched. The two guarded migration tests remain skipped in the passing suite.
-- **Minimum external action:** provide a disposable MySQL 8.4 staging endpoint and credentials through a secret manager, then run `RealMysqlMigrationTest` with the explicit staging marker and schema create/drop opt-in. Never point it at production.
+- Migrations `V1`–`V4` are present.
+- The `mysql` profile enables Flyway with baseline-on-migrate, baseline version 1, checksum validation, and Hibernate `ddl-auto=validate`.
+- Fresh schemas apply `V1`–`V4`; pre-Flyway schemas baseline at `V1` and apply the additive `V2`–`V4`.
+- Flyway resolves `11.15.0` through the local POM bump.
+- Real-MySQL tests passed on MySQL 9.7.1, including legacy data preservation and idempotent re-run.
+- Flyway reports MySQL 9.7 as newer than its verified 9.4 ceiling; this warning is expected and does not itself indicate failure.
+- The actual Aiven MySQL version, schema history, user privileges, TLS mode, backups, and network path remain unknown.
+- JDBC must use `sslMode=REQUIRED` at minimum, preferably `VERIFY_CA` or `VERIFY_IDENTITY` with the Aiven CA configured.
+
+**Minimum external action:** confirm the Aiven backup and schema state, then run the guarded migration test against a disposable staging schema on the same major version as Aiven. Never point it at production.
 
 ## File storage and dataset lifecycle
 
-- **Verified locally:** upload path is `${FILE_UPLOAD_DIR}`; Docker sets `/app/uploads/datasets`. Dataset records retain generated basenames resolved within this directory. The Docker entrypoint creates/chowns storage and checks it is writable after dropping to UID 10001. Local test suite covers file-backed service behavior and dataset workflows.
-- Missing stored files produce an explicit error; the app does not synthesize dataset content.
-- **Requires external access:** Render must mount a persistent disk at `/app/uploads`, with the app path `/app/uploads/datasets` writable by UID 10001. A container volume declaration does not prove Render persistence. No dashboard disk inspection or restart persistence test was possible.
+- Upload path is `${FILE_UPLOAD_DIR}`; the Docker image sets `/app/uploads/datasets`.
+- The entrypoint creates/chowns the upload and data directories, checks writability, drops to UID 10001, and starts the JVM.
+- Local smoke confirmed upload, profiling, reports, and PDF generation.
+- **Requires provider verification:** Render must mount a persistent disk at `/app/uploads`, and the path must survive a restart. The image’s `VOLUME` declaration does not prove persistence.
+- Multi-instance deployment is unsupported unless all instances share the same upload volume.
 
 ## SMTP and password reset
 
-- **Verified locally:** missing JavaMailSender, successful send, and simulated `MailSendException` cases; service returns the same generic public response and deletes the reset token after delivery failure. Existing tests cover reset-token expiration and single-use behavior.
-- **Requires external access:** production SMTP settings and successful mail delivery were not verified. Configure `SPRING_MAIL_HOST`, `SPRING_MAIL_PORT`, `SPRING_MAIL_USERNAME`, `SPRING_MAIL_PASSWORD`, `SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH`, `SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE`, recommended `STARTTLS_REQUIRED` and `SSL_CHECKSERVERIDENTITY`, `PASSWORD_RESET_FROM`, and `FRONTEND_URL` in Render. Never expose values in Git or chat.
+- Unit/integration tests cover missing transport, successful send, delivery failure, token cleanup, expiration, and single-use behavior.
+- **Requires provider verification:** production SMTP variables, sender identity, TLS, and actual delivery.
+- Required names include `SPRING_MAIL_HOST`, `SPRING_MAIL_PORT`, `SPRING_MAIL_USERNAME`, `SPRING_MAIL_PASSWORD`, `PASSWORD_RESET_FROM`, and `FRONTEND_URL`.
+- Never expose SMTP values in Git or logs.
 
-## Deployment automation
+## Deployment automation and provider access
 
-- **Verified in repository:** root `Dockerfile` builds the Java 17 backend; `backend/Dockerfile` is also available for a `backend` build context. Render app binds the provided port and serves health at `/api/health`. Vercel configuration is `frontend/vercel.json`; frontend root is `frontend`, build is `npm run build`, output is `dist`, with SPA rewrite.
-- There is no GitHub Actions deploy workflow or Render/Vercel project manifest. Native provider Git integrations should be used to avoid duplicate deploy pipelines.
-- **Requires external access:** GitHub CLI authentication is invalid; no Render or Vercel CLI/dashboard connector is installed. I could not verify provider repository connections, production branch, automatic deploy-on-push, masked environment variables, Render disk, or Aiven networking. Do not claim the integrations are enabled until checked in their dashboards.
-- Once confirmed, one push to `main` should cause Render to build/deploy the backend and Vercel to build/deploy the frontend. Expected behavior must be confirmed from both providers' logs; it cannot be guaranteed from repository files alone.
+- Repository has root and backend Dockerfiles, `frontend/vercel.json`, and no GitHub Actions workflow or Render blueprint.
+- GitHub is verified: repository public, branch `main`, latest origin commit `d13e6c6`, Vercel status success, no workflows/hooks/Actions secrets, environment `Production` exists.
+- Vercel is partially verified: live frontend and correct API bundle; dashboard/build settings not inspectable.
+- Render is partially verified: live health/CORS/auth behavior; service settings, env vars, disk, logs, and auto-deploy not inspectable.
+- Aiven is blocked: no CLI, token, or dashboard access.
+- `render`, `vercel`, and `avn` CLIs are not installed; no provider tokens are available.
+- GitHub token has `repo`, `workflow`, `read:org`, and `gist` scopes.
 
 ## End-to-end scope
 
-Local backend/frontend suites exercise auth, ownership, upload/profile, analytics/statistics, AutoML/what-if, fairness/drift, reports/PDF, and frontend service/page flows. The frontend tests use mocked service calls in component tests and are not a live browser-to-API E2E suite. **Not verified on staging or production:** full registration → login → upload → preprocessing/statistics → AutoML/evaluation/explainability/fairness/what-if/drift/Ask Dataset → report/PDF → logout/relogin and cross-user isolation. This requires a staging account, test dataset, SMTP sink, and a successful storage restart test. Mobile visual/responsive testing was not performed because local browser use is disabled in this environment.
+Local backend/frontend suites and the local smoke test exercise auth, ownership, upload/profile, analytics/statistics, AutoML/what-if, fairness/drift, reports/PDF, and frontend flows. Frontend component tests use mocked service calls and are not a live browser-to-production E2E suite.
+
+**Not verified on production:** registration → login → upload → analysis → AutoML → explainability/fairness → what-if/drift → report/PDF → relogin and cross-user isolation. This requires an approved production/staging account, test dataset, SMTP sink, and a storage restart test.
 
 ## Remaining release blockers
 
-1. A disposable Aiven/MySQL 8.4 migration test and database TLS/network validation have not been completed.
-2. Render persistent disk attachment and write access have not been verified.
-3. Render/Vercel GitHub integration, production branch `main`, and auto-deploy-on-push settings are not inspectable here.
-4. Authenticated staging E2E workflows and SMTP delivery remain unverified.
+1. Explicit approval to commit, push, and deploy.
+2. Render provider verification: service source, branch, auto-deploy, env names, disk, health check, logs.
+3. Vercel provider verification: root/build/output, Production `VITE_API_BASE_URL`, auto-deploy, domain.
+4. Aiven verification: version, schema history, TLS, privileges, backup, network path, connection limits.
+5. Confirmed restorable backup before deployment.
+6. Authenticated production/staging E2E and SMTP delivery.
+7. Upload persistence across a real provider restart.
+8. Docker image build verification, or explicit risk acceptance for the unavailable daemon.
+9. Resolution or risk acceptance for the live HTTP/2 timeout.
 
-No passwords, JWT secrets, database credentials, SMTP credentials, or API keys are included in this report.
+## Current production risk note
 
-## Final push command
+Production `d13e6c6` still serves the old frontend login page with development demo credentials, and the backend does not have `/api/health/ready`. These candidate fixes are not live. The demo credentials are not production secrets, but they mislead users because those accounts exist only in the dev profile.
 
-After the blockers above are cleared and the local release changes are committed on `main`:
+## Final release command
+
+Only after blockers are cleared and explicit approval is received:
 
 ```bash
 git push origin main
 ```
 
-Do not force-push. Confirm the matching commit completed in Render and Vercel; verify Render `/api/health` returns HTTP 200, Vercel `/` and `/dashboard` load, and browser API calls pass CORS. Then perform the authenticated workflow against staging before treating the release as fully accepted.
+Do not force-push. Confirm Render and Vercel build the matching commit, then run the production smoke checklist. A successful build or `/api/health` response alone is not release acceptance.
+
+No passwords, JWT secrets, database credentials, SMTP credentials, or API keys are included in this report.

@@ -24,6 +24,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -61,9 +62,9 @@ class AuthServiceTest {
     void testRegisterSuccess() {
         RegisterRequest req = new RegisterRequest("Dr. Ada Lovelace", "ada@scientific.org", "science123");
 
-        when(userRepository.existsByEmail("ada@scientific.org")).thenReturn(false);
+        when(userRepository.existsByEmailIgnoreCase("ada@scientific.org")).thenReturn(false);
         when(passwordEncoder.encode("science123")).thenReturn("encoded_secret");
-        when(userRepository.save(any(User.class))).thenReturn(sampleUser);
+        when(userRepository.saveAndFlush(any(User.class))).thenReturn(sampleUser);
         when(jwtUtils.generateTokenFromUsername("ada@scientific.org")).thenReturn("mocked.jwt.token");
 
         AuthResponse resp = authService.register(req);
@@ -72,16 +73,57 @@ class AuthServiceTest {
         assertEquals("mocked.jwt.token", resp.getToken());
         assertEquals("ada@scientific.org", resp.getUser().getEmail());
         assertEquals("Dr. Ada Lovelace", resp.getUser().getName());
-        verify(userRepository, times(1)).save(any(User.class));
+        verify(userRepository, times(1)).saveAndFlush(any(User.class));
+    }
+
+    @Test
+    void testRegisterNormalizesEmailWithRootLocale() {
+        RegisterRequest req = new RegisterRequest("Dr. Ada Lovelace", "  ADA@SCIENTIFIC.ORG ", "science123");
+
+        when(userRepository.existsByEmailIgnoreCase("ada@scientific.org")).thenReturn(false);
+        when(passwordEncoder.encode("science123")).thenReturn("encoded_secret");
+        when(userRepository.saveAndFlush(any(User.class))).thenReturn(sampleUser);
+        when(jwtUtils.generateTokenFromUsername("ada@scientific.org")).thenReturn("mocked.jwt.token");
+
+        authService.register(req);
+
+        verify(userRepository).existsByEmailIgnoreCase("ada@scientific.org");
+        verify(userRepository).saveAndFlush(argThat(user -> "ada@scientific.org".equals(user.getEmail())));
     }
 
     @Test
     void testRegisterDuplicateEmailThrowsException() {
         RegisterRequest req = new RegisterRequest("Dr. Ada Lovelace", "ada@scientific.org", "science123");
-        when(userRepository.existsByEmail("ada@scientific.org")).thenReturn(true);
+        when(userRepository.existsByEmailIgnoreCase("ada@scientific.org")).thenReturn(true);
 
         assertThrows(BadRequestException.class, () -> authService.register(req));
-        verify(userRepository, never()).save(any(User.class));
+        verify(userRepository, never()).saveAndFlush(any(User.class));
+    }
+
+    @Test
+    void testRegisterRejectsPasswordOverBcryptByteLimit() {
+        String tooLong = "😀".repeat(25);
+        RegisterRequest req = new RegisterRequest("Dr. Ada Lovelace", "ada@scientific.org", tooLong);
+
+        BadRequestException ex = assertThrows(BadRequestException.class, () -> authService.register(req));
+
+        assertTrue(ex.getMessage().contains("72 bytes"));
+        verifyNoInteractions(passwordEncoder);
+        verify(userRepository, never()).saveAndFlush(any(User.class));
+    }
+
+    @Test
+    void testRegisterConvertsDuplicateRaceToBadRequest() {
+        RegisterRequest req = new RegisterRequest("Dr. Ada Lovelace", "ada@scientific.org", "science123");
+
+        when(userRepository.existsByEmailIgnoreCase("ada@scientific.org")).thenReturn(false);
+        when(passwordEncoder.encode("science123")).thenReturn("encoded_secret");
+        when(userRepository.saveAndFlush(any(User.class)))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("duplicate"));
+
+        BadRequestException ex = assertThrows(BadRequestException.class, () -> authService.register(req));
+
+        assertTrue(ex.getMessage().contains("already registered"));
     }
 
     @Test

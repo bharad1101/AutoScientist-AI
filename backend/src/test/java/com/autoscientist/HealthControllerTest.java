@@ -48,6 +48,16 @@ class HealthControllerTest {
     }
 
     @Test
+    @DisplayName("2b. GET /api/health/ready verifies the datasource without authentication")
+    void readinessEndpointIsPublicAndChecksDatabase() throws Exception {
+        mockMvc.perform(get("/api/health/ready"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.status").value("UP"))
+                .andExpect(jsonPath("$.data.database").value("UP"));
+    }
+
+    @Test
     @DisplayName("3. GET /api/dashboard/stats requires authentication (401 without token)")
     void protectedEndpointRequiresAuthentication() throws Exception {
         mockMvc.perform(get("/api/dashboard/stats"))

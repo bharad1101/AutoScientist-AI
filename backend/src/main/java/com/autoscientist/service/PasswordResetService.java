@@ -19,6 +19,7 @@ import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.Locale;
 import java.util.Optional;
 
 @Slf4j
@@ -27,6 +28,8 @@ import java.util.Optional;
 public class PasswordResetService {
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+    /** BCrypt only consumes the first 72 bytes; reject longer inputs explicitly. */
+    private static final int BCRYPT_MAX_PASSWORD_BYTES = 72;
 
     private final UserRepository userRepository;
     private final PasswordResetTokenRepository tokenRepository;
@@ -45,7 +48,7 @@ public class PasswordResetService {
      */
     @Transactional
     public void requestReset(String email) {
-        String normalized = email == null ? "" : email.trim().toLowerCase();
+        String normalized = normalizeEmail(email);
         if (normalized.isEmpty()) {
             return;
         }
@@ -91,6 +94,10 @@ public class PasswordResetService {
         if (tokenValue.isEmpty()) {
             throw invalidToken();
         }
+        if (newPassword != null
+                && newPassword.getBytes(StandardCharsets.UTF_8).length > BCRYPT_MAX_PASSWORD_BYTES) {
+            throw new BadRequestException("Password must be at most 72 bytes (UTF-8).");
+        }
 
         PasswordResetToken token = tokenRepository.findByTokenHash(hash(tokenValue))
                 .orElseThrow(PasswordResetService::invalidToken);
@@ -126,6 +133,10 @@ public class PasswordResetService {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is unavailable", e);
         }
+    }
+
+    private static String normalizeEmail(String email) {
+        return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
     }
 
     private static BadRequestException invalidToken() {

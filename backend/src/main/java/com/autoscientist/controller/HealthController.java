@@ -1,10 +1,17 @@
 package com.autoscientist.controller;
 
 import com.autoscientist.dto.common.ApiResponse;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -15,13 +22,55 @@ import java.util.Map;
  * Does not disclose secrets, environment details, or application data.
  */
 @RestController
+@RequiredArgsConstructor
+@Slf4j
 public class HealthController {
+
+    private final DataSource dataSource;
 
     @GetMapping("/api/health")
     public ResponseEntity<ApiResponse<Map<String, Object>>> health() {
-        Map<String, Object> status = new LinkedHashMap<>();
-        status.put("status", "UP");
-        status.put("timestamp", Instant.now().toString());
-        return ResponseEntity.ok(ApiResponse.success(status));
+        return ResponseEntity.ok(ApiResponse.success(status("UP", null)));
+    }
+
+    /**
+     * Readiness probe: also proves the configured datasource is reachable.
+     * Returns no connection details or exception text.
+     */
+    @GetMapping("/api/health/ready")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> readiness() {
+        boolean databaseUp = databaseIsReachable();
+        Map<String, Object> status = status(databaseUp ? "UP" : "DOWN",
+                databaseUp ? "UP" : "DOWN");
+        if (databaseUp) {
+            return ResponseEntity.ok(ApiResponse.success(status));
+        }
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(ApiResponse.<Map<String, Object>>builder()
+                        .success(false)
+                        .message("Service is not ready.")
+                        .data(status)
+                        .build());
+    }
+
+    private boolean databaseIsReachable() {
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            statement.execute("SELECT 1");
+            return true;
+        } catch (SQLException e) {
+            log.warn("Readiness check failed: datasource is not reachable ({})", e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    private Map<String, Object> status(String status, String database) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("status", status);
+        if (database != null) {
+            payload.put("database", database);
+        }
+        payload.put("timestamp", Instant.now().toString());
+        return payload;
     }
 }
