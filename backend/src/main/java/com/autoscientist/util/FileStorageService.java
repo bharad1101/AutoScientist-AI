@@ -98,8 +98,8 @@ public class FileStorageService {
      * Returns the storage key after validating that the referenced file still
      * exists.
      *
-     * @deprecated Prefer {@link #getInputStream(String)} — a storage key is not
-     *             a filesystem path when S3 is active.
+     * @deprecated Prefer {@link #getInputStream(String)} — callers should read
+     *             from the returned stream rather than assuming a local path.
      */
     @Deprecated
     public java.nio.file.Path loadFilePath(String storedFilename) {
@@ -133,8 +133,8 @@ public class FileStorageService {
      * Non-destructive connectivity check: returns {@code true} if the storage
      * backend is reachable and its bucket/directory is accessible.
      *
-     * <p>Uses a HeadBucket call (S3) or a directory stat (local filesystem) —
-     * no objects are created or deleted during a readiness probe.</p>
+     * <p>Uses a directory stat to verify the upload directory is accessible
+     * and writable. No files are created or deleted during the check.</p>
      */
     public boolean isHealthy() {
         try {

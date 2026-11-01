@@ -191,10 +191,8 @@ app:
 
   upload:
 
-    # When STORAGE_BACKEND=s3 this directory is unused, so a safe default is
-    # provided to avoid a missing-property failure at startup.  When using the
-    # local backend on a Render Persistent Disk, override with the mounted path:
-    #   FILE_UPLOAD_DIR=/app/uploads/datasets
+    # Local filesystem path for uploaded datasets. The Dockerfile sets
+    # FILE_UPLOAD_DIR=/app/uploads/datasets; override only if needed.
 
     dir: ${FILE_UPLOAD_DIR:/app/uploads/datasets}
 
