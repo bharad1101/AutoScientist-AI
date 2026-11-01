@@ -127,13 +127,25 @@ export default function ImportWizard({ onCancel, onImported }) {
       setError('Choose a file first.');
       return;
     }
+    if (submitting) return; // prevent double-click
     setSubmitting(true);
     setError('');
+    // Safety timeout: if the server never responds, un-stick the spinner after 2.5 min.
+    const safetyTimer = setTimeout(() => {
+      setSubmitting(false);
+      setError('The import is taking longer than expected. Please check the Datasets page — your upload may have succeeded.');
+    }, 150000);
     try {
       const res = await datasetService.uploadDataset(file, name, description, options());
+      clearTimeout(safetyTimer);
       onImported?.(res?.data);
     } catch (err) {
-      setError(err.response?.data?.message || err.message || 'Import failed.');
+      clearTimeout(safetyTimer);
+      const msg = err.response?.data?.message || err.message || 'Import failed.';
+      const isTimeout = err.code === 'ECONNABORTED' || msg.includes('timeout');
+      setError(isTimeout
+        ? 'The upload timed out. The file may be too large or the server is busy. Please try again.'
+        : msg);
       setSubmitting(false);
     }
   };

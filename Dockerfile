@@ -24,6 +24,5 @@ ENV SPRING_PROFILES_ACTIVE=mysql
 ENV FILE_UPLOAD_DIR=/app/uploads/datasets
 ENV PORT=8080
 
-VOLUME ["/app/uploads"]
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

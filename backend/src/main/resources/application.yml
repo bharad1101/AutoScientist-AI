@@ -85,6 +85,7 @@ app:
 
     dir: ${FILE_UPLOAD_DIR:./uploads/datasets}
 
+
   password-reset:
 
     token-ttl-minutes: ${PASSWORD_RESET_TTL_MINUTES:30}
@@ -190,9 +191,10 @@ app:
 
   upload:
 
-    # Required, no fallback: point this at the mounted persistent disk.
+    # Local filesystem path for uploaded datasets. The Dockerfile sets
+    # FILE_UPLOAD_DIR=/app/uploads/datasets; override only if needed.
 
-    dir: ${FILE_UPLOAD_DIR}
+    dir: ${FILE_UPLOAD_DIR:/app/uploads/datasets}
 
   password-reset:
 

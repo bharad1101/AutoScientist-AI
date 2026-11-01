@@ -27,22 +27,27 @@ import java.util.Map;
 public class HealthController {
 
     private final DataSource dataSource;
+    private final com.autoscientist.util.FileStorageService fileStorageService;
 
     @GetMapping("/api/health")
     public ResponseEntity<ApiResponse<Map<String, Object>>> health() {
-        return ResponseEntity.ok(ApiResponse.success(status("UP", null)));
+        return ResponseEntity.ok(ApiResponse.success(status("UP", null, null)));
     }
 
     /**
-     * Readiness probe: also proves the configured datasource is reachable.
+     * Readiness probe: proves datasource + storage backend are reachable.
      * Returns no connection details or exception text.
      */
     @GetMapping("/api/health/ready")
     public ResponseEntity<ApiResponse<Map<String, Object>>> readiness() {
         boolean databaseUp = databaseIsReachable();
-        Map<String, Object> status = status(databaseUp ? "UP" : "DOWN",
-                databaseUp ? "UP" : "DOWN");
-        if (databaseUp) {
+        boolean storageUp = fileStorageService.isHealthy();
+        boolean allUp = databaseUp && storageUp;
+        Map<String, Object> status = status(allUp ? "UP" : "DOWN",
+                databaseUp ? "UP" : "DOWN",
+                storageUp ? "UP" : "DOWN");
+        status.put("storageBackend", fileStorageService.getBackendDescription());
+        if (allUp) {
             return ResponseEntity.ok(ApiResponse.success(status));
         }
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
@@ -64,11 +69,14 @@ public class HealthController {
         }
     }
 
-    private Map<String, Object> status(String status, String database) {
+    private Map<String, Object> status(String status, String database, String storage) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("status", status);
         if (database != null) {
             payload.put("database", database);
+        }
+        if (storage != null) {
+            payload.put("storage", storage);
         }
         payload.put("timestamp", Instant.now().toString());
         return payload;
