@@ -4,11 +4,19 @@ server:
   # SERVER_PORT takes priority; PORT is the Render-conventional fallback.
   port: ${SERVER_PORT:${PORT:8080}}
 
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+
   # Let in-flight requests finish when the platform sends SIGTERM.
   shutdown: graceful
 
-  # Respect X-Forwarded-Proto/Host from the hosting provider's TLS terminator.
-  forward-headers-strategy: framework
+  # Do not trust client-supplied X-Forwarded-* headers by default. A deployment
+  # behind a known TLS terminator that strips/sets these headers may opt in with
+  # FORWARD_HEADERS_STRATEGY=framework; leaving this at none prevents arbitrary
+  # forwarded headers from influencing request identity, scheme or host.
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:none}
 
   servlet:
 
@@ -24,7 +32,10 @@ spring:
 
   profiles:
 
-    active: ${SPRING_PROFILES_ACTIVE:mysql}
+    # Local development is the default so `./mvnw spring-boot:run` works, but it
+    # must be explicitly acknowledged with APP_ENVIRONMENT=local. Deployments set
+    # SPRING_PROFILES_ACTIVE=mysql; guards reject dev on any unacknowledged host.
+    active: ${SPRING_PROFILES_ACTIVE:dev}
 
   lifecycle:
 
@@ -33,13 +44,43 @@ spring:
 
 
 
+  http:
+
+    converters:
+
+      preferred-json-mapper: jackson2
+
+
+
   servlet:
 
     multipart:
 
-      max-file-size: 50MB
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:50MB}
 
-      max-request-size: 50MB
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:50MB}
+
+
+
+  # SMTP is configured through SPRING_MAIL_* environment variables. These
+  # timeouts stop a slow or unreachable mail provider from holding a request
+  # (and a database transaction) open indefinitely. They are harmless when no
+  # mail host is configured.
+  mail:
+
+    default-encoding: UTF-8
+
+    properties:
+
+      mail:
+
+        smtp:
+
+          connectiontimeout: ${MAIL_CONNECTION_TIMEOUT_MS:10000}
+
+          timeout: ${MAIL_TIMEOUT_MS:10000}
+
+          writetimeout: ${MAIL_WRITE_TIMEOUT_MS:10000}
 
 
 
@@ -67,13 +108,44 @@ spring:
 
 
 
+# Bounded ingestion and analysis budgets. Upload file size is enforced by both
+# spring.servlet.multipart and resource-budget.max-mb (keep them aligned).
+resource-budget:
+  max-mb: ${RESOURCE_BUDGET_MAX_MB:50}
+  max-rows: ${RESOURCE_BUDGET_MAX_ROWS:1000000}
+  max-columns: ${RESOURCE_BUDGET_MAX_COLUMNS:5000}
+  max-cells: ${RESOURCE_BUDGET_MAX_CELLS:10000000}
+  max-sheets: ${RESOURCE_BUDGET_MAX_SHEETS:20}
+
+
 app:
 
   jwt:
 
-    secret: ${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
+    secret: ${JWT_SECRET}
 
     expiration-ms: ${JWT_EXPIRATION_MS:86400000} # 24 hours
+
+  rate-limit:
+
+    # Per-principal (or per-IP when anonymous) token bucket. This is a
+    # single-node limiter; use a shared store/gateway limiter for horizontally
+    # scaled deployments.
+    enabled: ${RATE_LIMIT_ENABLED:true}
+
+    capacity: ${RATE_LIMIT_CAPACITY:120}
+
+    refill-tokens: ${RATE_LIMIT_REFILL_TOKENS:120}
+
+    refill-minutes: ${RATE_LIMIT_REFILL_MINUTES:1}
+
+    max-buckets: ${RATE_LIMIT_MAX_BUCKETS:10000}
+
+    # Number of reverse-proxy hops whose X-Forwarded-For entries are trusted for
+    # anonymous client identity. Zero (default) ignores the header entirely and
+    # keys by the servlet container's remote address; only raise this when the
+    # proxy topology is known and the edge strips untrusted forwarded headers.
+    trusted-proxy-count: ${TRUSTED_PROXY_COUNT:0}
 
   cors:
 
@@ -85,6 +157,9 @@ app:
 
     dir: ${FILE_UPLOAD_DIR:./uploads/datasets}
 
+  jobs:
+
+    cleanup-cron: ${JOB_CLEANUP_CRON:0 0 * * * *}
 
   password-reset:
 
@@ -99,6 +174,11 @@ app:
     outbox-enabled: ${PASSWORD_RESET_OUTBOX_ENABLED:false}
 
     outbox-dir: ${PASSWORD_RESET_OUTBOX_DIR:./data/mail-outbox}
+
+# Every log line carries the request/correlation id set by RequestIdFilter.
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{requestId:-no-request}] %logger{40} - %msg%n"
 
 
 
@@ -142,9 +222,8 @@ spring:
       max-lifetime: 1800000
 
   # No default here on purpose: staging/production must supply JWT_SECRET
-  # (base64, >= 64 bytes decoded, e.g. `openssl rand -base64 64 | tr -d '\n'`).
-  # Startup fails fast if it is missing; the dev-only fallback lives in the
-  # default profile above and must never be used outside local development.
+  # (Base64-encoded HS256 key, at least 32 decoded bytes; 64 random bytes
+  # recommended, e.g. `openssl rand -base64 64 | tr -d '\n'`).
 
   jpa:
 
@@ -160,8 +239,8 @@ spring:
 
     enabled: ${SPRING_FLYWAY_ENABLED:true}
 
-    # Databases that predate Flyway are baselined at V1; the additive V2-V4
-    # deltas are applied to them. Fresh databases run V1-V4.
+    # Databases that predate Flyway are baselined at V1; the additive V2-V7
+    # deltas are applied to them. Fresh databases run V1-V7.
 
     baseline-on-migrate: true
 
@@ -233,3 +312,19 @@ spring:
 app:
   password-reset:
     outbox-enabled: true
+
+management:
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        include: health,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  info:
+    env:
+      enabled: false
+  metrics:
+    tags:
+      application: autoscientist-backend

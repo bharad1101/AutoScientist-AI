@@ -3,6 +3,11 @@ package com.autoscientist.controller;
 import com.autoscientist.dto.common.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationInfo;
+import org.flywaydb.core.api.MigrationInfoService;
+import org.flywaydb.core.api.MigrationState;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,25 +33,30 @@ public class HealthController {
 
     private final DataSource dataSource;
     private final com.autoscientist.util.FileStorageService fileStorageService;
+    private final ObjectProvider<Flyway> flywayProvider;
 
     @GetMapping("/api/health")
     public ResponseEntity<ApiResponse<Map<String, Object>>> health() {
-        return ResponseEntity.ok(ApiResponse.success(status("UP", null, null)));
+        return ResponseEntity.ok(ApiResponse.success(status("UP", null, null, null)));
     }
 
     /**
-     * Readiness probe: proves datasource + storage backend are reachable.
+     * Readiness probe: proves datasource + storage backend are reachable and
+     * that Flyway has no pending or failed migrations when Flyway is enabled.
      * Returns no connection details or exception text.
      */
     @GetMapping("/api/health/ready")
     public ResponseEntity<ApiResponse<Map<String, Object>>> readiness() {
         boolean databaseUp = databaseIsReachable();
         boolean storageUp = fileStorageService.isHealthy();
-        boolean allUp = databaseUp && storageUp;
+        Flyway flyway = flywayProvider.getIfAvailable();
+        boolean migrationsUp = flyway == null || migrationsAreCurrent(flyway);
+        String migrationStatus = flyway == null ? "SKIPPED" : (migrationsUp ? "UP" : "DOWN");
+        boolean allUp = databaseUp && storageUp && migrationsUp;
         Map<String, Object> status = status(allUp ? "UP" : "DOWN",
                 databaseUp ? "UP" : "DOWN",
-                storageUp ? "UP" : "DOWN");
-        status.put("storageBackend", fileStorageService.getBackendDescription());
+                storageUp ? "UP" : "DOWN",
+                migrationStatus);
         if (allUp) {
             return ResponseEntity.ok(ApiResponse.success(status));
         }
@@ -69,7 +79,20 @@ public class HealthController {
         }
     }
 
-    private Map<String, Object> status(String status, String database, String storage) {
+    private boolean migrationsAreCurrent(Flyway flyway) {
+        try {
+            MigrationInfoService info = flyway.info();
+            MigrationInfo current = info.current();
+            return current != null
+                    && current.getState() == MigrationState.SUCCESS
+                    && info.pending().length == 0;
+        } catch (RuntimeException e) {
+            log.warn("Readiness check failed: Flyway state is unavailable ({})", e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    private Map<String, Object> status(String status, String database, String storage, String migrations) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("status", status);
         if (database != null) {
@@ -77,6 +100,9 @@ public class HealthController {
         }
         if (storage != null) {
             payload.put("storage", storage);
+        }
+        if (migrations != null) {
+            payload.put("migrations", migrations);
         }
         payload.put("timestamp", Instant.now().toString());
         return payload;

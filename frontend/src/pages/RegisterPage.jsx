@@ -50,7 +50,7 @@ const RegisterPage = () => {
         const fieldError = Object.values(err.response.data.data)[0];
         setError(fieldError || err.response.data?.message || 'Registration failed.');
       } else {
-        setError(err.response?.data?.message || err.message || 'Registration failed.');
+        setError(err.response?.data?.message || 'Registration failed.');
       }
     } finally {
       setSubmitting(false);

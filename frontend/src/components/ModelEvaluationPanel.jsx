@@ -1,6 +1,5 @@
 import React from 'react';
 import { Line, Scatter } from 'react-chartjs-2';
-import { Chart as ChartJS } from 'chart.js';
 import '../utils/chartSetup';
 
 const num = (v) => (typeof v === 'number' && !Number.isNaN(v) ? v : null);
@@ -137,7 +136,7 @@ function ConfusionMatrix({ cm }) {
   );
 }
 
-function CurveCard({ title, subtitle, dataset, xLabel, yLabel, diagonal, badge }) {
+function CurveCard({ title, subtitle, dataset, xLabel, yLabel, badge }) {
   const options = {
     responsive: true,
     maintainAspectRatio: false,
@@ -175,7 +174,7 @@ function CurveCard({ title, subtitle, dataset, xLabel, yLabel, diagonal, badge }
   );
 }
 
-function CalibrationCard({ calibration }) {
+function CalibrationCard({ calibration, positiveClassLabel }) {
   if (!calibration || !Array.isArray(calibration.bins) || calibration.bins.length === 0) {
     return (
       <div className="alert alert-secondary mb-4">
@@ -216,7 +215,11 @@ function CalibrationCard({ calibration }) {
             <i className="bi bi-bullseye text-primary me-2"></i>
             Probability Calibration (Reliability Diagram)
           </h6>
-          <small className="text-muted">Observed positive rate versus mean predicted probability per decile.</small>
+          <small className="text-muted">
+            {positiveClassLabel
+              ? `Observed rate for ${positiveClassLabel} versus mean predicted probability per decile.`
+              : 'Observed positive rate versus mean predicted probability per decile.'}
+          </small>
         </div>
         {num(calibration.brierScore) !== null && (
           <span className="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25">
@@ -329,6 +332,14 @@ export default function ModelEvaluationPanel({ evaluation, problemType, modelNam
   }
 
   const isClassification = problemType === 'CLASSIFICATION';
+  const binaryClassification = evaluation.binaryClassification !== false;
+  const probabilityStatus =
+    evaluation.probabilityStatus || (binaryClassification ? 'AVAILABLE' : 'NOT_BINARY');
+  const positiveClassLabel =
+    evaluation.positiveClassLabel ||
+    evaluation.probabilityClassLabel ||
+    (binaryClassification ? `Class ${evaluation.positiveClassIndex ?? 1}` : null);
+  const showBinaryProbability = binaryClassification && probabilityStatus !== 'NOT_BINARY';
   const cv = evaluation.crossValidation;
   const residual = evaluation.residualSummary;
 
@@ -356,6 +367,11 @@ export default function ModelEvaluationPanel({ evaluation, problemType, modelNam
                     <i className="bi bi-grid-3x3-gap text-primary me-2"></i>
                     Confusion Matrix (Holdout Test)
                   </h6>
+                  {showBinaryProbability && evaluation.decisionThreshold != null && (
+                    <small className="text-muted">
+                      Decision threshold: {evaluation.decisionThreshold}
+                    </small>
+                  )}
                 </div>
                 <ConfusionMatrix cm={evaluation.confusionMatrix} />
               </div>
@@ -403,7 +419,12 @@ export default function ModelEvaluationPanel({ evaluation, problemType, modelNam
             </div>
           </div>
 
-          {evaluation.rocStatus === 'UNAVAILABLE_NO_SCORES' ? (
+          {!showBinaryProbability ? (
+            <div className="alert alert-secondary">
+              <i className="bi bi-info-circle me-1"></i>
+              Binary probability diagnostics are unavailable for multiclass classification.
+            </div>
+          ) : evaluation.rocStatus === 'UNAVAILABLE_NO_SCORES' ? (
             <div className="alert alert-secondary">
               <i className="bi bi-info-circle me-1"></i>
               ROC/PR curves unavailable: the selected algorithm does not expose continuous scores.
@@ -478,7 +499,12 @@ export default function ModelEvaluationPanel({ evaluation, problemType, modelNam
             </div>
           )}
 
-          <CalibrationCard calibration={evaluation.calibration} />
+          {showBinaryProbability && (
+            <CalibrationCard
+              calibration={evaluation.calibration}
+              positiveClassLabel={positiveClassLabel}
+            />
+          )}
 
           <div className="row g-4">
             <CrossValidationCard cv={cv} />

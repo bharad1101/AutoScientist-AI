@@ -14,12 +14,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -34,6 +35,7 @@ import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -60,7 +62,7 @@ class PasswordResetIntegrationTest {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
-    @MockBean
+    @MockitoBean
     private PasswordResetNotifier notifier;
 
     @BeforeEach
@@ -79,7 +81,7 @@ class PasswordResetIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.message").value(
-                        "If an account exists for that email, a password reset link has been sent."));
+                        "If an account exists for that email, we'll attempt to send password reset instructions."));
 
         verify(notifier, never()).send(any(User.class), anyString(), anyLong());
     }
@@ -95,9 +97,37 @@ class PasswordResetIntegrationTest {
                         .content(objectMapper.writeValueAsString(new ForgotPasswordRequest(user.getEmail()))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value(
-                        "If an account exists for that email, a password reset link has been sent."));
+                        "If an account exists for that email, we'll attempt to send password reset instructions."));
 
         assertThat(tokenRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("An unexpected notifier failure still returns the generic response and leaves no token")
+    void notifierFailureDoesNotLeakAccountExistence() throws Exception {
+        User user = createUser("notifier.boom@example.org", "OldPassword123!");
+        when(notifier.send(any(User.class), anyString(), anyLong()))
+                .thenThrow(new IllegalStateException("simulated transport bug"));
+
+        mockMvc.perform(post("/api/auth/forgot-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ForgotPasswordRequest(user.getEmail()))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.message").value(
+                        "If an account exists for that email, we'll attempt to send password reset instructions."));
+
+        assertThat(tokenRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("Only the necessary auth endpoints are public; session endpoints stay protected")
+    void publicResetEndpointsDoNotExposeSessionEndpoints() throws Exception {
+        mockMvc.perform(get("/api/auth/me"))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/api/auth/logout"))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -126,6 +156,30 @@ class PasswordResetIntegrationTest {
         reset(rawToken, "AnotherPassword789!")
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.success").value(false));
+    }
+
+    @Test
+    @DisplayName("Password reset invalidates previously issued JWTs without affecting other users")
+    void passwordResetInvalidatesExistingJwt() throws Exception {
+        User user = createUser("jwt.rotation@example.org", "OldPassword123!");
+        User other = createUser("jwt.other@example.org", "OtherPassword123!");
+        String oldToken = tokenFrom(login(user.getEmail(), "OldPassword123!").andReturn());
+        String otherToken = tokenFrom(login(other.getEmail(), "OtherPassword123!").andReturn());
+        String rawToken = requestToken(user);
+
+        mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + oldToken))
+                .andExpect(status().isOk());
+
+        reset(rawToken, "NewPassword456!").andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + oldToken))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + otherToken))
+                .andExpect(status().isOk());
+
+        String freshToken = tokenFrom(login(user.getEmail(), "NewPassword456!").andReturn());
+        mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + freshToken))
+                .andExpect(status().isOk());
     }
 
     @Test
@@ -218,6 +272,11 @@ class PasswordResetIntegrationTest {
         return mockMvc.perform(post("/api/auth/login")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(new LoginRequest(email, password))));
+    }
+
+    private String tokenFrom(MvcResult result) throws Exception {
+        return objectMapper.readTree(result.getResponse().getContentAsString())
+                .path("data").path("token").asText();
     }
 
     private static String sha256(String value) throws Exception {

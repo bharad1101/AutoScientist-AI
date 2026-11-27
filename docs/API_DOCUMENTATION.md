@@ -79,6 +79,24 @@ unless the endpoint returns a file download.
 Fairness metrics and explainability outputs are included in model run results;
 they do not have separate controller routes.
 
+## Asynchronous jobs
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/jobs` | Submit `type=EDA\|ASSOCIATION\|AUTOML` with `datasetId`; `targetColumn` required for `AUTOML`; returns `202` |
+| GET | `/api/jobs` | List the authenticated user's jobs |
+| GET | `/api/jobs/{id}` | Get an owned job's status, progress, and error |
+| POST | `/api/jobs/{id}/cancel` | Cancel an owned job (best effort) |
+
+`INGESTION` is rejected with guidance to use `POST /api/datasets/upload`. Queue
+saturation returns `413` rather than silently dropping work.
+
+## Model serving
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/v1/models/{modelId}/predict` | Real inference from the persisted trained artifact (ownership-checked) |
+
 ## Reports, dashboard, and health
 
 | Method | Path | Purpose |
@@ -92,15 +110,25 @@ they do not have separate controller routes.
 | GET | `/api/reports/{id}/export/excel` | Download Excel export |
 | GET | `/api/reports/{id}/export/markdown` | Download Markdown export |
 | GET | `/api/dashboard/stats` | Get authenticated user's dashboard statistics |
-| GET | `/api/health` | Public lightweight process health response |
+| GET | `/api/health` | Public liveness response |
+| GET | `/api/health/ready` | Public readiness: datasource and storage backend reachability (`503` when down) |
+| GET | `/actuator/health`, `/actuator/info` | Public matcher in `SecurityConfig`; actuator exposure is configured only in the `dev` profile document, so do not rely on these in `mysql` production |
+| GET | `/actuator/metrics`, `/actuator/prometheus` | Configured in the `dev` profile document only; not exposed by default in production |
 
 ## Production notes
 
 - Dataset and associated feature access is scoped to the authenticated owner;
-  report and dataset ownership regression tests cover cross-user access.
-- Upload endpoints accept CSV and Excel files and enforce the application's
-  configured multipart size limit.
-- `GET /api/health` reports process status only. It does not perform a database
-  readiness check.
+  report, job, model, drift, and dataset ownership regression tests cover
+  cross-user access.
+- Upload endpoints accept CSV and Excel files and enforce `resource-budget`
+  file-size/row/column limits. Exceeding them returns **HTTP 413** with a
+  `ResourceLimitExceededException` message; the old silent-truncation path is gone.
+- Every response includes `X-Request-Id` (caller-supplied when safe, otherwise
+  generated). The same value is attached to server logs as `requestId`.
+- `GET /api/health` is a liveness check. `GET /api/health/ready` additionally
+  proves the datasource and storage backend are reachable, returning `503` when
+  either is down.
+- Rate limiting returns `429` with `Retry-After` and `X-RateLimit-*` headers.
+  It is in-memory per instance.
 - Reset-email delivery requires working SMTP configuration; the API keeps the
   forgot-password response generic to avoid account enumeration.

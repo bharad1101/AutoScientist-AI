@@ -142,8 +142,8 @@ export default function AnalyticsStoryVisual() {
                       {correlationMatrix.map((c, i) => {
                         const val = parseFloat(c.r);
                         const isDiag = c.var1 === c.var2;
-                        let cellBg = '#151D2F';
-                        let textColor = '#E5E7EB';
+                        let cellBg;
+                        let textColor;
 
                         if (isDiag) {
                           cellBg = '#1E293B';

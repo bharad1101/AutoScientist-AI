@@ -1,6 +1,10 @@
 # AutoScientist AI — Comprehensive Testing Guide
 
-
+> **Runtime requirement:** all backend tests must run on **JDK 17**. Set
+> `JAVA_HOME` to a JDK 17 installation before invoking `./mvnw`.
+> `backend/mvnw` is the official Apache Maven Wrapper; it bootstraps Maven 3.9.9
+> automatically, so no system Maven installation is required.
+> Current measured baseline: **272 tests, 0 failures, 0 errors, 6 environment-gated skips**.
 
 ## 1. Testing Philosophy
 
@@ -48,7 +52,12 @@ backend/src/test/java/com/autoscientist/
 
 ├── EndToEndPipelineTest.java                 # Full regression workflow on student_performance.csv
 
-└── BiomedicalClassificationPipelineTest.java # Full clinical classification workflow on biomedical_patient_data.csv
+├── BiomedicalClassificationPipelineTest.java # Full clinical classification workflow on biomedical_patient_data.csv
+
+├── CsvTableTest.java                         # CSV parsing, quoted newlines, row/column resource limits
+├── RequestIdFilterTest.java                  # Correlation ID generation, propagation, injection safety
+├── FlywayMigrationTest.java                  # Fresh V1 baseline, legacy baseline, real V5 DDL on H2
+└── RealMysqlMigrationTest.java               # Env-gated real-MySQL fresh/legacy migration validation
 
 ```
 
@@ -62,15 +71,29 @@ backend/src/test/java/com/autoscientist/
 
 
 
-Execute Maven Surefire test suite from the backend directory:
+Execute the Maven Surefire test suite from the backend directory with the bundled
+wrapper (no system Maven installation needed):
 
 ```bash
+
+export JAVA_HOME="/path/to/jdk-17"
+
+export PATH="$JAVA_HOME/bin:$PATH"
 
 cd backend
 
 ./mvnw clean test
 
 ```
+
+> Real-MySQL migration and MySQL-profile smoke tests are skipped unless their
+> environment variables are set; see `docs/MANUAL_DEPLOYMENT_STEPS.md` for the
+> staging MySQL command. The opt-in `WorkflowPerformanceBenchmarkTest` and the
+> expensive case in
+> `backend/src/test/java/com/autoscientist/benchmark/WideAssociationBenchmarkTest.java`
+> skip unless the `benchmark` system property is set:
+> `./mvnw -Dtest=WorkflowPerformanceBenchmarkTest -Dbenchmark=true test`.
+> The small functional `WideAssociationBenchmarkTest` case still runs in the normal suite.
 
 
 
@@ -118,7 +141,7 @@ cd backend
 
 [INFO] Running com.autoscientist.AuthServiceTest
 
-[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0
 
 [INFO] Running com.autoscientist.BiomedicalClassificationPipelineTest
 
@@ -126,13 +149,13 @@ cd backend
 
 [INFO] Running com.autoscientist.DatasetProfilerTest
 
-[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0
 
 [INFO]
 
 [INFO] Results:
 
-[INFO] Tests run: 24, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 272, Failures: 0, Errors: 0, Skipped: 6
 
 [INFO] BUILD SUCCESS
 
@@ -154,9 +177,20 @@ Compile and bundle the React 18 / Vite frontend:
 
 cd frontend
 
-npm run build
+npm ci
+
+npm test
+
+VITE_API_BASE_URL="https://api.example.com/api" npm run build
 
 ```
+
+The frontend URL validator is covered by `src/test/apiBaseUrl.test.js` and the
+Vite build wiring by `src/test/viteConfigBuildGuard.test.js`. Builds reject
+missing, invalid, non-HTTPS, loopback (including mapped IPv6 and numeric
+encodings), credentialed, query/fragment, non-standard-port, and trailing-slash
+values. A relative `/api` is accepted only when
+`VITE_API_PROXY_MODE=same-origin` is set for a real reverse-proxy deployment.
 
 
 
@@ -164,21 +198,19 @@ npm run build
 
 ```
 
-vite v5.4.x building for production...
+✓ 23 test files, 165 tests passed
 
-✓ 116 modules transformed.
+vite v8.x building for production...
 
-dist/index.html                               0.52 kB │ gzip:   0.35 kB
+✓ modules transformed.
 
-dist/assets/bootstrap-icons-*.woff2         134.04 kB
+dist/index.html                               0.5 kB │ gzip:   0.3 kB
 
-dist/assets/bootstrap-icons-*.woff          180.29 kB
+dist/assets/index-*.css                     ~310 kB │ gzip:  ~45 kB
 
-dist/assets/index-*.css                     308.39 kB │ gzip:  44.94 kB
+dist/assets/index-*.js                      ~218 kB │ gzip:  ~61 kB
 
-dist/assets/index-*.js                      478.62 kB │ gzip: 149.03 kB
-
-✓ built in 3.60s
+✓ built successfully
 
 ```
 

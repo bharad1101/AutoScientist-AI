@@ -19,7 +19,7 @@ export const AuthProvider = ({ children }) => {
 
   const initAuth = useCallback(async () => {
     const currentReq = ++authRequestId.current;
-    let savedToken = null;
+    let savedToken;
     try {
       savedToken = localStorage.getItem('autoscientist_token');
     } catch {
@@ -155,10 +155,4 @@ export const AuthProvider = ({ children }) => {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};
+export const useAuth = () => useContext(AuthContext);

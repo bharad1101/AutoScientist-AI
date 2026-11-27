@@ -12,6 +12,7 @@ import com.autoscientist.security.JwtUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -29,6 +30,12 @@ public class AuthService {
     /** BCrypt only consumes the first 72 bytes; reject longer inputs explicitly. */
     private static final int BCRYPT_MAX_PASSWORD_BYTES = 72;
 
+    /** Uniform rejection avoids disclosing whether an email already has an account. */
+    private static final String REGISTRATION_REJECTED =
+            "Registration could not be completed. Please check your details or sign in.";
+
+    private static final String INVALID_CREDENTIALS = "Invalid email or password.";
+
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
@@ -44,7 +51,7 @@ public class AuthService {
         String normalizedEmail = normalizeEmail(request.getEmail());
 
         if (userRepository.existsByEmailIgnoreCase(normalizedEmail)) {
-            throw new BadRequestException("Email is already registered: " + normalizedEmail);
+            throw new BadRequestException(REGISTRATION_REJECTED);
         }
 
         User user = User.builder()
@@ -59,10 +66,10 @@ public class AuthService {
             // 400 instead of an opaque 500 at transaction commit.
             user = userRepository.saveAndFlush(user);
         } catch (DataIntegrityViolationException ex) {
-            throw new BadRequestException("Email is already registered: " + normalizedEmail);
+            throw new BadRequestException(REGISTRATION_REJECTED);
         }
 
-        String token = jwtUtils.generateTokenFromUsername(user.getEmail());
+        String token = jwtUtils.generateTokenFromCredentials(user.getEmail(), user.getPasswordHash());
 
         return AuthResponse.builder()
                 .token(token)
@@ -72,6 +79,11 @@ public class AuthService {
     }
 
     public AuthResponse login(LoginRequest request) {
+        if (request.getPassword() == null
+                || request.getPassword().getBytes(StandardCharsets.UTF_8).length > BCRYPT_MAX_PASSWORD_BYTES) {
+            throw new BadCredentialsException(INVALID_CREDENTIALS);
+        }
+
         String rawEmail = request.getEmail() != null ? request.getEmail().trim() : "";
         String normalizedEmail = normalizeEmail(rawEmail);
 

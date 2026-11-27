@@ -1,0 +1,4 @@
+# The local dev profile intentionally has no packaged signing key.
+# DevJwtSecretInitializer generates an ephemeral HS256 key in memory when the
+# dev profile is active and neither JWT_SECRET nor app.jwt.secret is supplied.
+# Production profiles require an externally supplied JWT_SECRET.

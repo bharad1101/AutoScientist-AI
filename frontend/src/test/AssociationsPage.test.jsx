@@ -180,9 +180,8 @@ describe('AssociationsPage', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('associations-error-alert')).toBeInTheDocument();
-      expect(
-        screen.getByText(/Failed to reach associations service/i)
-      ).toBeInTheDocument();
+      expect(screen.getByText(/Failed to load statistical associations/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Failed to reach associations service/i)).not.toBeInTheDocument();
     });
 
     // Page must NOT be blank

@@ -5,8 +5,11 @@ import com.autoscientist.analysis.fairness.FairnessEngine;
 import com.autoscientist.analysis.feature.FeatureEngineeringEngine;
 import com.autoscientist.analysis.feature.FeatureEngineeringEngine.DatasetSplit;
 import com.autoscientist.analysis.ml.AutoMlEngine;
+import com.autoscientist.analysis.ml.ClassificationSemantics;
 import com.autoscientist.analysis.ml.AutoMlEngine.ModelBenchmarkResult;
 import com.autoscientist.analysis.ml.AutoMlEngine.PredictiveModel;
+import com.autoscientist.analysis.ml.ModelArtifactCodec;
+import com.autoscientist.analysis.ml.ServingArtifact;
 import com.autoscientist.analysis.ml.WhatIfEngine;
 import com.autoscientist.analysis.xai.ExplainabilityEngine;
 import com.autoscientist.dto.ml.*;
@@ -14,6 +17,7 @@ import com.autoscientist.entity.*;
 import com.autoscientist.exception.BadRequestException;
 import com.autoscientist.repository.ExperimentRepository;
 import com.autoscientist.repository.ExperimentVersionRepository;
+import com.autoscientist.repository.ModelArtifactRepository;
 import com.autoscientist.repository.ModelRunRepository;
 import com.autoscientist.util.ColumnSelection;
 import com.autoscientist.util.FileStorageService;
@@ -23,6 +27,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,6 +51,7 @@ public class AutoMlService {
     private final ExperimentRepository experimentRepository;
     private final ExperimentVersionRepository experimentVersionRepository;
     private final ModelRunRepository modelRunRepository;
+    private final ModelArtifactRepository modelArtifactRepository;
     private final AnalysisRunService analysisRunService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -127,6 +133,10 @@ public class AutoMlService {
         // Compute Fairness
         FairnessDto fairnessDto = fairnessEngine.evaluateFairness(
                 activeColumns, split, bestModel, request.getSensitiveColumn());
+        if (fairnessDto != null) {
+            fairnessDto.setPositiveClassIndex(split.getPositiveClassIndex());
+            fairnessDto.setPositiveClassLabel(split.getPositiveClassLabel());
+        }
 
         // Baseline mean for target
         double baselineMean = 0;
@@ -210,8 +220,32 @@ public class AutoMlService {
                     .build();
             run = modelRunRepository.save(run);
 
+            Long artifactId = null;
+            if (res.isBest()) {
+                try {
+                    ServingArtifact servingArtifact = new ServingArtifact(
+                            res.getTrainedModel(),
+                            split.getFeatureNames(),
+                            split.getPreprocessingConfig(),
+                            split.getReverseClassMap(),
+                            split.getTargetColumn(),
+                            split.getProblemType(),
+                            res.getAlgorithm());
+                    ModelArtifact artifact = modelArtifactRepository.save(ModelArtifact.builder()
+                            .experimentVersion(version)
+                            .modelName(res.getModelName())
+                            .payload(ModelArtifactCodec.serialize(servingArtifact))
+                            .build());
+                    artifactId = artifact.getId();
+                } catch (IOException | RuntimeException e) {
+                    throw new IllegalStateException("Failed to persist serving artifact for model '"
+                            + res.getModelName() + "' (version " + version.getId() + ")", e);
+                }
+            }
+
             runDtos.add(ModelRunDto.builder()
                     .id(run.getId())
+                    .artifactId(artifactId)
                     .modelName(res.getModelName())
                     .algorithm(res.getAlgorithm())
                     .hyperparameters(res.getHyperparameters())
@@ -263,6 +297,12 @@ public class AutoMlService {
                 .experimentName(expName)
                 .problemType(split.getProblemType())
                 .targetColumn(targetCol)
+                .positiveClassIndex(split.getPositiveClassIndex())
+                .positiveClassLabel(split.getPositiveClassLabel())
+                .decisionThreshold(ClassificationSemantics.BINARY_DECISION_THRESHOLD)
+                .probabilityStatus(split.isBinaryClassification()
+                        ? ClassificationSemantics.PROBABILITY_STATUS_AVAILABLE
+                        : ClassificationSemantics.PROBABILITY_STATUS_NOT_BINARY)
                 .models(runDtos)
                 .bestModel(runDtos.get(0))
                 .featureImportances(featureImportances)
@@ -298,17 +338,27 @@ public class AutoMlService {
         double delta = pred - referencePred;
 
         String predClass = null;
+        Integer predictedClassIndex = null;
         Double conf = null;
+        Double positiveClassProbability = null;
         String refClass = null;
+        Integer positiveClassIndex = split.getPositiveClassIndex();
+        String positiveClassLabel = split.getPositiveClassLabel();
+        String probabilityStatus = ClassificationSemantics.PROBABILITY_STATUS_NOT_BINARY;
         if ("CLASSIFICATION".equals(split.getProblemType())) {
             int classIdx = (int) Math.round(pred);
+            predictedClassIndex = classIdx;
             predClass = split.getReverseClassMap() != null ? split.getReverseClassMap().get(classIdx) : String.valueOf(classIdx);
             if (predClass == null) predClass = "Class " + classIdx;
 
-            // Honest confidence: only reported when the model can produce a score.
-            double proba = model.predictProba(scenario.vector);
-            if (!Double.isNaN(proba) && proba >= 0.0 && proba <= 1.0) {
-                conf = Math.max(proba, 1.0 - proba);
+            if (positiveClassIndex != null) {
+                probabilityStatus = ClassificationSemantics.PROBABILITY_STATUS_UNAVAILABLE_NO_SCORES;
+                double proba = model.predictProba(scenario.vector);
+                if (ClassificationSemantics.isUsableScore(proba)) {
+                    positiveClassProbability = proba;
+                    conf = Math.max(proba, 1.0 - proba);
+                    probabilityStatus = ClassificationSemantics.PROBABILITY_STATUS_AVAILABLE;
+                }
             }
             int refIdx = (int) Math.round(referencePred);
             if (split.getReverseClassMap() != null) {
@@ -370,12 +420,21 @@ public class AutoMlService {
                 .problemType(split.getProblemType())
                 .predictedValue(round3(pred))
                 .predictedClass(predClass)
+                .predictedClassIndex(predictedClassIndex)
                 .confidence(conf)
                 .confidenceAvailable(conf != null)
+                .positiveClassProbability(positiveClassProbability)
+                .positiveClassIndex(positiveClassIndex)
+                .positiveClassLabel(positiveClassLabel)
+                .probabilityClassIndex(positiveClassIndex)
+                .probabilityClassLabel(positiveClassLabel)
+                .probabilityStatus(probabilityStatus)
+                .decisionThreshold(ClassificationSemantics.BINARY_DECISION_THRESHOLD)
                 .baselineMean(round3(context.baselineMean()))
                 .deltaFromBaseline(round3(delta))
                 .keyInfluences(influences)
                 .referencePrediction(round3(referencePred))
+                .referenceClass(refClass)
                 .referenceDescription("Reference profile: training " + (refClass != null ? "class " + refClass
                         : "median for numeric and mode for categorical features"))
                 .featureSchema(featureSchema)
@@ -474,6 +533,9 @@ public class AutoMlService {
                 .features(features)
                 .referencePrediction(round3(referencePred))
                 .referenceClass(referenceClass)
+                .positiveClassIndex(split.getPositiveClassIndex())
+                .positiveClassLabel(split.getPositiveClassLabel())
+                .decisionThreshold(ClassificationSemantics.BINARY_DECISION_THRESHOLD)
                 .referenceDescription("Reference profile: training " + (referenceClass != null
                         ? "class " + referenceClass : "median for numeric and mode for categorical features"))
                 .build();
@@ -499,10 +561,12 @@ public class AutoMlService {
 
         if (schema.isEmpty()) {
             return FeatureEffectDto.builder()
-                    .featureName(featureName)
-                    .supported(false)
-                    .unsupportedReason("No features available in the trained model schema.")
-                    .build();
+                .featureName(featureName)
+                .supported(false)
+                .binaryClassification(false)
+                .probabilityStatus(ClassificationSemantics.PROBABILITY_STATUS_NOT_BINARY)
+                .unsupportedReason("No features available in the trained model schema.")
+                .build();
         }
 
         WhatIfEngine.RawFeature targetFeature = null;
@@ -518,10 +582,12 @@ public class AutoMlService {
 
         if (targetFeature == null) {
             return FeatureEffectDto.builder()
-                    .featureName(featureName)
-                    .supported(false)
-                    .unsupportedReason("Feature '" + featureName + "' is not an active predictor in the trained model (it may be the target variable or an identifier).")
-                    .build();
+                .featureName(featureName)
+                .supported(false)
+                .binaryClassification(false)
+                .probabilityStatus(ClassificationSemantics.PROBABILITY_STATUS_NOT_BINARY)
+                .unsupportedReason("Feature '" + featureName + "' is not an active predictor in the trained model (it may be the target variable or an identifier).")
+                .build();
         }
 
         WhatIfEngine.Encoded reference = WhatIfEngine.encode(schema, split.getFeatureNames(), scalerMean, scalerStd,
@@ -531,6 +597,12 @@ public class AutoMlService {
         if ("CLASSIFICATION".equals(split.getProblemType()) && split.getReverseClassMap() != null) {
             refClass = split.getReverseClassMap().get((int) Math.round(refPred));
         }
+        boolean binaryClassification = split.isBinaryClassification();
+        Integer positiveClassIndex = split.getPositiveClassIndex();
+        String positiveClassLabel = split.getPositiveClassLabel();
+        String probabilityStatus = binaryClassification
+                ? ClassificationSemantics.PROBABILITY_STATUS_UNAVAILABLE_NO_SCORES
+                : ClassificationSemantics.PROBABILITY_STATUS_NOT_BINARY;
 
         Double refVal = targetFeature.imputeValue instanceof Number
                 ? ((Number) targetFeature.imputeValue).doubleValue()
@@ -553,8 +625,14 @@ public class AutoMlService {
                 Map<String, Object> inputs = Collections.singletonMap(targetFeature.name, xVal);
                 WhatIfEngine.Encoded enc = WhatIfEngine.encode(schema, split.getFeatureNames(), scalerMean, scalerStd, inputs);
                 double p = context.model().predictSingle(enc.vector);
-                double proba = context.model().predictProba(enc.vector);
-                Double probaVal = (Double.isNaN(proba) || Double.isInfinite(proba)) ? null : round3(proba);
+                Double probaVal = null;
+                if (binaryClassification) {
+                    double proba = context.model().predictProba(enc.vector);
+                    if (ClassificationSemantics.isUsableScore(proba)) {
+                        probaVal = round3(proba);
+                        probabilityStatus = ClassificationSemantics.PROBABILITY_STATUS_AVAILABLE;
+                    }
+                }
                 points.add(FeatureEffectPointDto.builder()
                         .x(round3(xVal))
                         .prediction(round3(p))
@@ -570,8 +648,14 @@ public class AutoMlService {
                 Map<String, Object> inputs = Collections.singletonMap(targetFeature.name, cat);
                 WhatIfEngine.Encoded enc = WhatIfEngine.encode(schema, split.getFeatureNames(), scalerMean, scalerStd, inputs);
                 double p = context.model().predictSingle(enc.vector);
-                double proba = context.model().predictProba(enc.vector);
-                Double probaVal = (Double.isNaN(proba) || Double.isInfinite(proba)) ? null : round3(proba);
+                Double probaVal = null;
+                if (binaryClassification) {
+                    double proba = context.model().predictProba(enc.vector);
+                    if (ClassificationSemantics.isUsableScore(proba)) {
+                        probaVal = round3(proba);
+                        probabilityStatus = ClassificationSemantics.PROBABILITY_STATUS_AVAILABLE;
+                    }
+                }
                 categories.add(FeatureEffectCategoryDto.builder()
                         .category(cat)
                         .prediction(round3(p))
@@ -593,6 +677,13 @@ public class AutoMlService {
                 .referenceValue(refVal)
                 .referencePrediction(round3(refPred))
                 .referenceClass(refClass)
+                .binaryClassification(binaryClassification)
+                .positiveClassIndex(positiveClassIndex)
+                .positiveClassLabel(positiveClassLabel)
+                .probabilityClassIndex(positiveClassIndex)
+                .probabilityClassLabel(positiveClassLabel)
+                .probabilityStatus(probabilityStatus)
+                .decisionThreshold(ClassificationSemantics.BINARY_DECISION_THRESHOLD)
                 .points(points)
                 .categories(categories)
                 .supported(true)
@@ -636,8 +727,14 @@ public class AutoMlService {
 
             List<FeatureImportanceDto> runImportances = parseImportances(mr.getFeatureImportancesJson());
 
+            Long artifactId = modelArtifactRepository
+                    .findFirstByExperimentVersionAndModelNameOrderByIdDesc(version, mr.getModelName())
+                    .map(ModelArtifact::getId)
+                    .orElse(null);
+
             ModelRunDto dto = ModelRunDto.builder()
                     .id(mr.getId())
+                    .artifactId(artifactId)
                     .modelName(mr.getModelName())
                     .algorithm(mr.getAlgorithm())
                     .hyperparameters(parseMap(mr.getHyperparametersJson()))
@@ -698,12 +795,44 @@ public class AutoMlService {
                     .build();
         }
 
+        DatasetSplit latestSplit = context == null ? null : context.split();
+        Map<String, Object> bestEvaluation = bestModelDto == null ? null : bestModelDto.getEvaluation();
+        Integer positiveClassIndex = latestSplit != null ? latestSplit.getPositiveClassIndex() : null;
+        String positiveClassLabel = latestSplit != null ? latestSplit.getPositiveClassLabel() : null;
+        Double decisionThreshold = latestSplit != null && latestSplit.isBinaryClassification()
+                ? ClassificationSemantics.BINARY_DECISION_THRESHOLD : null;
+        String probabilityStatus = latestSplit != null && latestSplit.isBinaryClassification()
+                ? ClassificationSemantics.PROBABILITY_STATUS_AVAILABLE
+                : ClassificationSemantics.PROBABILITY_STATUS_NOT_BINARY;
+        if (bestEvaluation != null) {
+            if (positiveClassIndex == null && bestEvaluation.get("positiveClassIndex") instanceof Number n) {
+                positiveClassIndex = n.intValue();
+            }
+            if (positiveClassLabel == null && bestEvaluation.get("positiveClassLabel") != null) {
+                positiveClassLabel = String.valueOf(bestEvaluation.get("positiveClassLabel"));
+            }
+            if (decisionThreshold == null && bestEvaluation.get("decisionThreshold") instanceof Number n) {
+                decisionThreshold = n.doubleValue();
+            }
+            if (bestEvaluation.get("probabilityStatus") != null) {
+                probabilityStatus = String.valueOf(bestEvaluation.get("probabilityStatus"));
+            }
+        }
+        if (fairnessDto != null) {
+            fairnessDto.setPositiveClassIndex(positiveClassIndex);
+            fairnessDto.setPositiveClassLabel(positiveClassLabel);
+        }
+
         return AutoMlResponseDto.builder()
                 .experimentId(experiment.getId())
                 .experimentVersionId(version.getId())
                 .experimentName(experiment.getName())
                 .problemType(experiment.getProblemType())
                 .targetColumn(experiment.getTargetColumn())
+                .positiveClassIndex(positiveClassIndex)
+                .positiveClassLabel(positiveClassLabel)
+                .decisionThreshold(decisionThreshold)
+                .probabilityStatus(probabilityStatus)
                 .models(runDtos)
                 .bestModel(bestModelDto)
                 .featureImportances(featList)
@@ -726,8 +855,10 @@ public class AutoMlService {
             FairnessDto.FairnessDtoBuilder b = FairnessDto.builder()
                     .sensitiveColumn(m.get("sensitiveColumn") != null ? String.valueOf(m.get("sensitiveColumn")) : null)
                     .disparateImpactStatus(m.get("disparateImpactStatus") != null ? String.valueOf(m.get("disparateImpactStatus")) : null)
+                    .positiveClassLabel(m.get("positiveClassLabel") != null ? String.valueOf(m.get("positiveClassLabel")) : null)
                     .recommendation(m.get("recommendation") != null ? String.valueOf(m.get("recommendation")) : null);
             if (m.get("demographicParityRatio") instanceof Number n) b.demographicParityRatio(n.doubleValue());
+            if (m.get("positiveClassIndex") instanceof Number n) b.positiveClassIndex(n.intValue());
             if (m.get("groupPositiveRates") instanceof Map<?, ?> g) {
                 Map<String, Double> conv = new LinkedHashMap<>();
                 g.forEach((k, v) -> { if (v instanceof Number n) conv.put(String.valueOf(k), n.doubleValue()); });

@@ -43,7 +43,7 @@ const getStoredCollapsed = () => {
     return typeof window !== 'undefined' && window.localStorage && typeof window.localStorage.getItem === 'function'
       ? window.localStorage.getItem(STORAGE_KEY) === 'true'
       : false;
-  } catch (e) {
+  } catch {
     return false;
   }
 };
@@ -58,7 +58,7 @@ export default function Sidebar() {
       if (typeof window !== 'undefined' && window.localStorage && typeof window.localStorage.setItem === 'function') {
         window.localStorage.setItem(STORAGE_KEY, String(collapsed));
       }
-    } catch (e) {
+    } catch {
       // Ignore localStorage access failures in restricted environments
     }
   }, [collapsed]);

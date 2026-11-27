@@ -11,7 +11,14 @@
 Key Architectural Tenets:
 - **Zero Hallucination / No Fabricated Results**: Every correlation, ANOVA, p-value, decision tree, or quality score is calculated from real dataset observations.
 - **Strict Separation of Correlation & Causation**: All findings, hypotheses, and reports enforce scientific integrity, preventing unwarranted causal claims.
-- **Self-Contained Full-Stack**: Built entirely with Java 17+ (Spring Boot 3) on the backend and React (Vite, Bootstrap, Chart.js) on the frontend. No Python dependencies.
+- **Self-Contained Full-Stack**: Built entirely with Java 17 (Spring Boot 4; Java 21+ is not supported) on the backend and React (Vite, Bootstrap, Chart.js) on the frontend. No Python dependencies.
+
+### Runtime and API configuration
+
+- Java 17 is the mandatory backend source, build, test, container, and CI runtime.
+- Development runs the Vite frontend on `http://localhost:5173` with `VITE_API_BASE_URL=/api`; Vite proxies `/api` to the backend on `http://localhost:8080`.
+- Production uses either an explicitly configured HTTPS backend URL ending in `/api` (separate deployments) or same-origin `/api` plus `VITE_API_PROXY_MODE=same-origin` only when the host routes `/api` to the backend.
+- Production builds reject localhost/loopback, malformed URLs, unsupported protocols, credentials, query strings, fragments, non-443 ports, and unvalidated relative paths. No production URL is embedded in source or documentation.
 
 ---
 
@@ -21,7 +28,7 @@ Key Architectural Tenets:
 +-----------------------------------------------------------------------------------+
 |                                  CLIENT TIER                                      |
 |                                                                                   |
-|   React 18 SPA (Vite, Bootstrap 5, Bootstrap Icons, Chart.js, React Router v6)    |
+|   React 18 SPA (Vite, Bootstrap 5, Bootstrap Icons, Chart.js, React Router v7)    |
 |   - Authentication Context & Route Guards                                         |
 |   - Dataset Profiler, EDA Visualizations, Associations Matrix                     |
 |   - Hypothesis & Research Workflow, AutoML Benchmarks, What-If Simulator          |
@@ -38,7 +45,7 @@ Key Architectural Tenets:
 |    - AutoMLController, ExplainabilityController, ReportController, etc.           |
 |                                                                                   |
 |  [ Security & Auth Layer ]                                                        |
-|    - Spring Security 6, JWT Authentication Filter, BCrypt Password Encoder         |
+|    - Spring Security 7, JWT Authentication Filter, BCrypt Password Encoder         |
 |    - Strict IDOR (Insecure Direct Object Reference) Resource Ownership Guards     |
 |                                                                                   |
 |  [ Modular Analysis Engines ]                                                     |

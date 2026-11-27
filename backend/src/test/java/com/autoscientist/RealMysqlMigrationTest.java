@@ -27,11 +27,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * H2. This test therefore exercises the two real paths on real MySQL:
  *
  * <ol>
- *   <li><b>fresh install</b> — empty schema, Flyway V1–V4, then Hibernate
+ *   <li><b>fresh install</b> — empty schema, Flyway V1–V7, then Hibernate
  *       {@code ddl-auto=validate} must find the schema complete.</li>
  *   <li><b>legacy pre-Flyway upgrade</b> — a V1 schema transformed to known
  *       legacy column differences, with a live row; Flyway baselines at V1 and
- *       applies V2–V4, then the full application context runs schema validation.</li>
+ *       applies V2–V7, then the full application context runs schema validation.</li>
  * </ol>
  *
  * Run only against disposable staging and set
@@ -62,10 +62,11 @@ class RealMysqlMigrationTest {
         if (!location.matches("jdbc:mysql://[^/]+/?")) {
             throw new IllegalArgumentException("AS_TEST_MYSQL_URL must not include a default schema.");
         }
-        if (query.matches("(?is).*(^|&)sslMode=(DISABLED|PREFERRED)(&.*|$).*")) {
+        boolean localDisposable = location.matches("jdbc:mysql://(127\\.0\\.0\\.1|localhost)(:\\d+)?/?");
+        if (query.matches("(?is).*(^|&)sslMode=(DISABLED|PREFERRED)(&.*|$).*") && !localDisposable) {
             throw new IllegalArgumentException("Migration tests require TLS; use sslMode=REQUIRED or VERIFY_*.");
         }
-        if (!query.matches("(?is).*(^|&)sslMode=(REQUIRED|VERIFY_CA|VERIFY_IDENTITY)(&.*|$).*")) {
+        if (!query.matches("(?is).*(^|&)sslMode=(REQUIRED|VERIFY_CA|VERIFY_IDENTITY|DISABLED)(&.*|$).*")) {
             query = query.isBlank() ? "sslMode=REQUIRED" : query + "&sslMode=REQUIRED";
         }
         if (!query.matches("(?is).*(^|&)serverTimezone=.*")) query += "&serverTimezone=UTC";
@@ -102,6 +103,14 @@ class RealMysqlMigrationTest {
         }
     }
 
+    private String scalarString(DataSource ds, String sql) throws Exception {
+        try (Connection c = ds.getConnection(); Statement s = c.createStatement();
+             ResultSet rs = s.executeQuery(sql)) {
+            rs.next();
+            return rs.getString(1);
+        }
+    }
+
     private Flyway flyway(DataSource ds, boolean baseline) {
         return Flyway.configure()
                 .dataSource(ds)
@@ -117,6 +126,7 @@ class RealMysqlMigrationTest {
                 .run(
                         "--spring.profiles.active=mysql",
                         "--spring.main.banner-mode=off",
+                        "--APP_ENVIRONMENT=test-mysql-disposable",
                         "--spring.datasource.url=" + schemaUrl,
                         "--spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver",
                         "--spring.datasource.username=" + USER,
@@ -124,7 +134,7 @@ class RealMysqlMigrationTest {
                         "--spring.jpa.database-platform=org.hibernate.dialect.MySQLDialect",
                         "--spring.flyway.enabled=true",
                         "--spring.jpa.hibernate.ddl-auto=validate",
-                        "--app.jwt.secret=" + java.util.Base64.getEncoder().encodeToString(new byte[64]),
+                        "--app.jwt.secret=" + TestJwtSecrets.freshBase64Key(),
                         "--app.cors.allowed-origins=https://staging.invalid",
                         "--app.password-reset.frontend-url=https://staging.invalid",
                         "--app.upload.dir=" + java.nio.file.Path.of("target", "mysql-test-uploads").toAbsolutePath())) {
@@ -143,9 +153,16 @@ class RealMysqlMigrationTest {
             created = true;
             DataSource ds = dataSource(db);
             var result = flyway(ds, false).migrate();
-            assertThat(result.migrationsExecuted).as("fresh install runs V1–V4").isEqualTo(4);
+            assertThat(result.migrationsExecuted).as("fresh install runs V1–V7").isEqualTo(7);
             assertThat(scalar(ds, "SELECT COUNT(*) FROM flyway_schema_history WHERE success=1 AND version IS NOT NULL"))
-                    .as("all four versioned migrations are recorded").isEqualTo(4);
+                    .as("all seven versioned migrations are recorded").isEqualTo(7);
+            assertThat(scalarString(ds, "SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='"
+                    + db + "' AND TABLE_NAME='model_artifacts' AND COLUMN_NAME='payload'"))
+                    .as("V6 leaves model artifact payloads as LONGBLOB").isEqualTo("longblob");
+            assertThat(scalarString(ds, "SELECT DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS "
+                    + "WHERE CONSTRAINT_SCHEMA='" + db + "' AND CONSTRAINT_NAME='fk_model_artifact_experiment'"))
+                    .as("artifact FK does not cascade away experiment versions")
+                    .isIn("RESTRICT", "NO ACTION");
             validateWithApplication(schemaUrl);
         } finally {
             if (created) exec(root, "DROP DATABASE " + db);
@@ -194,11 +211,11 @@ class RealMysqlMigrationTest {
                             + "row_count,column_count,uploaded_at) VALUES "
                             + "(1,'old.csv','old-uuid.csv','/data/old.csv','text/csv',1234,42,3,NOW())");
 
-            // documented path: baseline at V1, then apply only the additive V2–V4
+            // documented path: baseline at V1, then apply only the additive V2–V7
             var result = flyway(ds, true).migrate();
-            assertThat(result.migrationsExecuted).as("legacy DB applies only the additive V2–V4").isEqualTo(3);
+            assertThat(result.migrationsExecuted).as("legacy DB applies only the additive V2–V7").isEqualTo(6);
             assertThat(scalar(ds, "SELECT COUNT(*) FROM flyway_schema_history WHERE success=1 AND version IS NOT NULL"))
-                    .as("baseline plus V2–V4 are recorded").isEqualTo(4);
+                    .as("baseline plus V2–V7 are recorded").isEqualTo(7);
 
             // existing data preserved
             assertThat(scalar(ds, "SELECT COUNT(*) FROM users")).isEqualTo(1);
@@ -229,6 +246,62 @@ class RealMysqlMigrationTest {
 
             // idempotent: re-running migrate() is a no-op
             assertThat(flyway(ds, true).migrate().migrationsExecuted).isZero();
+            validateWithApplication(schemaUrl);
+        } finally {
+            if (created) exec(root, "DROP DATABASE " + db);
+        }
+    }
+
+    @Test
+    void legacyJobsTableGainsOwnershipColumnsWithoutDataLoss() throws Exception {
+        String db = uniqueSchema("legacyjobs");
+        DataSource root = dataSource("");
+        String schemaUrl = databaseUrl(db);
+        boolean created = false;
+        try {
+            exec(root, "CREATE DATABASE " + db + " CHARACTER SET utf8mb4");
+            created = true;
+            DataSource ds = dataSource(db);
+
+            Flyway.configure().dataSource(ds).locations("classpath:db/migration")
+                    .target("1").load().migrate();
+
+            exec(ds,
+                    "CREATE TABLE jobs ("
+                            + "id CHAR(36) PRIMARY KEY,"
+                            + "type VARCHAR(255) NOT NULL,"
+                            + "status VARCHAR(20) NOT NULL,"
+                            + "progress INT NOT NULL,"
+                            + "error_message TEXT,"
+                            + "created_at TIMESTAMP NOT NULL,"
+                            + "started_at TIMESTAMP NULL,"
+                            + "completed_at TIMESTAMP NULL,"
+                            + "transient_file_path VARCHAR(255)"
+                            + ")",
+                    "INSERT INTO jobs (id,type,status,progress,created_at) VALUES "
+                            + "('7d7f4a10-6e2b-4c8e-9d55-0f1a2b3c4d5e','EDA','COMPLETED',100,NOW())",
+                    "DROP TABLE flyway_schema_history");
+
+            var result = flyway(ds, true).migrate();
+            assertThat(result.migrationsExecuted).as("baseline@1 then V2-V7").isEqualTo(6);
+
+            assertThat(scalar(ds, "SELECT COUNT(*) FROM jobs")).isEqualTo(1);
+            assertThat(scalarString(ds, "SELECT status FROM jobs")).isEqualTo("COMPLETED");
+            assertThat(scalar(ds, "SELECT progress FROM jobs")).isEqualTo(100);
+            assertThat(scalar(ds, "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='" + db
+                    + "' AND TABLE_NAME='jobs' AND COLUMN_NAME IN "
+                    + "('owner_id','dataset_id','target_column','problem_type')")).isEqualTo(4);
+            assertThat(scalarString(ds, "SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='"
+                    + db + "' AND TABLE_NAME='model_artifacts' AND COLUMN_NAME='payload'"))
+                    .isEqualTo("longblob");
+            assertThat(scalar(ds, "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA='"
+                    + db + "' AND TABLE_NAME='jobs' AND CONSTRAINT_NAME='fk_jobs_owner' "
+                    + "AND CONSTRAINT_TYPE='FOREIGN KEY'")).isEqualTo(1);
+            assertThat(scalar(ds, "SELECT COUNT(*) FROM jobs WHERE owner_id IS NOT NULL"))
+                    .as("legacy rows have no owner information to backfill")
+                    .isZero();
+
+            assertThat(flyway(ds, true).migrate().migrationsExecuted).as("idempotent re-run").isZero();
             validateWithApplication(schemaUrl);
         } finally {
             if (created) exec(root, "DROP DATABASE " + db);

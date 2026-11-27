@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { WorkflowProvider } from '../context/WorkflowContext';
 import ProtectedRoute from '../components/ProtectedRoute';
@@ -10,7 +10,6 @@ import LoginPage from '../pages/LoginPage';
 import RegisterPage from '../pages/RegisterPage';
 import { authService } from '../services/authService';
 import { datasetService } from '../services/datasetService';
-import api from '../services/api';
 
 vi.mock('../services/authService', () => ({
   authService: {

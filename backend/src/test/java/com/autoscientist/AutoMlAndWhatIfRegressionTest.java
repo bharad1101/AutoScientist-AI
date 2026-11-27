@@ -93,6 +93,14 @@ class AutoMlAndWhatIfRegressionTest {
         assertTrue(perClass.get(0).containsKey("precision"));
         assertTrue(perClass.get(0).containsKey("recall"));
         assertTrue(perClass.get(0).containsKey("f1"));
+
+        assertEquals(Boolean.TRUE, eval.get("binaryClassification"));
+        assertEquals(1, eval.get("positiveClassIndex"));
+        assertEquals("Yes", eval.get("positiveClassLabel"));
+        assertEquals(1, eval.get("probabilityClassIndex"));
+        assertEquals("Yes", eval.get("probabilityClassLabel"));
+        assertEquals(0.5, ((Number) eval.get("decisionThreshold")).doubleValue(), 1e-9);
+        assertEquals("AVAILABLE", eval.get("probabilityStatus"));
     }
 
     @Test

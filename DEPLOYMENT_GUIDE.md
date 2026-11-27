@@ -1,267 +1,301 @@
-# AutoScientist AI — Production Deployment Guide
+# AutoScientist AI — Deployment Guide
 
-> **Branch:** `fix-dataset-storage-reliability`  
-> **Last verified commit:** see `git log --oneline -1`  
-> **Status:** ✅ Ready to deploy
+> **Status:** this document reflects the deployment configuration in this worktree.
+> No real Render/Vercel deployment has been verified from here: provider settings,
+> database state, deploy hooks, and health URLs must be checked manually by an
+> authorized operator. See `release-readiness/CANONICAL_DEPLOYMENT_CHECKLIST.md`.
 
 ---
 
 ## Table of Contents
 
 1. [Architecture overview](#1-architecture-overview)
-2. [Dataset storage and the ephemeral filesystem](#2-dataset-storage-and-the-ephemeral-filesystem)
-3. [Step-by-step: Render environment variables](#3-step-by-step-render-environment-variables)
-4. [Step-by-step: GitHub push and merge](#4-step-by-step-github-push-and-merge)
-5. [Vercel — no changes required](#5-vercel--no-changes-required)
-6. [Post-deployment verification checklist](#6-post-deployment-verification-checklist)
-7. [Rollback procedure](#7-rollback-procedure)
-8. [Environment variable reference](#8-environment-variable-reference)
-9. [Security notes](#9-security-notes)
-10. [Changed files summary](#10-changed-files-summary)
-11. [Test results](#11-test-results)
+2. [Storage and readiness](#2-storage-and-readiness)
+3. [Provider configuration (names only)](#3-provider-configuration-names-only)
+4. [GitHub Actions CI and gated deploys](#4-github-actions-ci-and-gated-deploys)
+5. [Preview deployment procedure](#5-preview-deployment-procedure)
+6. [Production deployment procedure](#6-production-deployment-procedure)
+7. [Post-deployment verification](#7-post-deployment-verification)
+8. [Rollback](#8-rollback)
+9. [Environment variable reference](#9-environment-variable-reference)
+10. [Security and local artifacts](#10-security-and-local-artifacts)
+11. [Exact staging, commit and push commands](#11-exact-staging-commit-and-push-commands)
+12. [Scope of this documentation pass](#12-scope-of-this-documentation-pass)
 
 ---
 
 ## 1. Architecture overview
 
-| Layer | Technology | Host |
-|-------|-----------|------|
-| Frontend | React 18 + Vite + Bootstrap 5 | Vercel |
-| Backend API | Java 17 + Spring Boot 3 | Render (free Docker) |
-| Database | MySQL 8.4 | Aiven |
-| Dataset file storage | **Local filesystem** (`/app/uploads/datasets`) | Render container |
+| Layer | Technology | Host / source of truth |
+|---|---|---|
+| Frontend | React 18 + Vite, framework `vite`, `npm ci`, `npm run build`, output `dist` | Vercel; Root Directory `frontend` is a **dashboard** setting |
+| Backend (preview) | Java 17 + Spring Boot 4 Docker image | Render service `autoscientist-backend-preview`, branch `preview/verify-deployment` |
+| Backend (production) | Java 17 + Spring Boot 4 Docker image | Render service `autoscientist-backend-production`, branch `main` |
+| Database | Managed MySQL (CI uses MySQL 8.4) | **Two separate databases** — one preview, one production; never shared |
+| Dataset files | Local filesystem under `/app/uploads/datasets` | Persistent Render disk mounted at `/app/uploads` for each service |
 
-The backend is deployed as a Docker container on Render's free tier. Dataset
-metadata (file names, column types, row counts) is stored permanently in the
-Aiven MySQL database. Physical dataset files (CSV / Excel) are stored on the
-container's local filesystem.
+```mermaid
+flowchart LR
+    PR["Pull request / push"] --> Checks["CI checks<br/>backend, frontend, Docker, MySQL 8.4,<br/>security, config validation, actionlint"]
+    Checks -->|"push: preview/verify-deployment"| PD["deploy-preview job"]
+    Checks -->|"push: main"| DD["deploy-production job"]
+    PD -->|"deploy hook secret"| RB["Render preview<br/>health: /api/health/ready"]
+    PD -->|"deploy hook secret"| VB["Vercel preview<br/>root: frontend"]
+    DD -->|"deploy hook secret"| RP["Render production<br/>health: /api/health/ready"]
+    DD -->|"deploy hook secret"| VP["Vercel production<br/>root: frontend"]
+    Browser["Browser"] --> VP
+    VP -->|"absolute HTTPS /api URL (build time)"| RP
+    VB -->|"absolute HTTPS /api URL (build time)"| RB
+    RB --> DB1[("Preview MySQL")]
+    RB --> D1[("Persistent disk /app/uploads")]
+    RP --> DB2[("Production MySQL")]
+    RP --> D2[("Persistent disk /app/uploads")]
+```
 
----
+`render.yaml` declares both backend services with `dockerContext: .`,
+`dockerfilePath: ./Dockerfile`, `healthCheckPath: /api/health/ready`,
+`autoDeployTrigger: off`, and separate disks. The only matched Docker
+pairs are repository root context `.` with the root `Dockerfile`, or `backend`
+context with `backend/Dockerfile`; never mix them. Provider Git auto-deploy is
+off for `main` and `preview/verify-deployment` because CI owns those deploys.
 
-## 2. Dataset storage and the ephemeral filesystem
+## 2. Storage and readiness
 
-### How it works
+Uploaded CSV/Excel files are written under `FILE_UPLOAD_DIR`
+(`/app/uploads/datasets` in the container) with UUID filenames, while their
+metadata lives in MySQL. `VOLUME ["/app/uploads"]` in both Dockerfiles does **not**
+provision provider storage: a durable disk must be attached and mounted at
+`/app/uploads` for **both** preview and production services, writable by uid 10001.
 
-When a user uploads a CSV or Excel file, `FileStorageService` stores it at
-`/app/uploads/datasets/<UUID>.<ext>` inside the Docker container and records
-the UUID reference in MySQL.
+Ephemeral container storage is **not acceptable**. Without a persistent disk,
+metadata survives a redeploy but the physical files do not, and features that
+need the file (EDA, AutoML, Ask Dataset, drift, reports) fail with a "dataset file
+is no longer available" error. Re-uploading is only a local workaround, not a
+deployed configuration.
 
-### ⚠️ Known limitation — ephemeral filesystem
+Health endpoints:
 
-**Render's free tier uses an ephemeral filesystem.** This means:
+- `GET /api/health` — liveness. Returns `{"success":true,"data":{"status":"UP"}}`
+  (the data map also includes `timestamp`).
+- `GET /api/health/ready` — readiness; checks the datasource with `SELECT 1`,
+  storage writability, and (when Flyway is enabled) that migrations are current.
+  The payload contains `status`, `database`, `storage`, `migrations`, and
+  `timestamp` under `data`. **There is no `storageBackend` field.** A failed
+  dependency returns HTTP 503 with `success: false` and `status: DOWN`.
+- Frontend health is the deployed root URL (`/`), not an API route.
 
-- Uploaded dataset files **do NOT survive** redeployments, instance restarts,
-  or container recycling.
-- After any deployment event, MySQL metadata for previously uploaded datasets
-  will still exist, but the physical files will be gone.
-- Features that require the physical file (EDA, AutoML, Ask Dataset, Data Drift,
-  Association Analysis) will return a friendly error:
-  > *"Dataset file is no longer available on the server. This can happen after a
-  > server redeployment. Please re-upload the dataset."*
+`/actuator/info` is intentionally not public. The base actuator configuration
+exposes `health,metrics,prometheus` only; do not rely on actuator endpoints for
+deployment verification — use `/api/health` and `/api/health/ready`.
 
-### What users should do
+## 3. Provider configuration (names only)
 
-- **Re-upload datasets** after any deployment or if the error above appears.
-- For a portfolio demo, upload datasets right before showing the application.
-- The MySQL metadata (column definitions, dataset name, etc.) is permanent and
-  never lost.
+### Backend (Render)
 
-### Why this is acceptable
+`render.yaml` sets `SPRING_PROFILES_ACTIVE=mysql`, `FILE_UPLOAD_DIR=/app/uploads/datasets`,
+`SPRING_JPA_HIBERNATE_DDL_AUTO=validate`, `SPRING_FLYWAY_ENABLED=true`,
+`RATE_LIMIT_ENABLED=true`, `ALLOW_PROXY_HEADERS=true`,
+`FORWARD_HEADERS_STRATEGY=framework`, and `TRUSTED_PROXY_COUNT=1` as non-secret
+values. Values for these keys must be supplied in the provider (many marked
+`sync: false` in `render.yaml`): `SPRING_DATASOURCE_URL`,
+`SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `JWT_SECRET`,
+`APP_CORS_ALLOWED_ORIGINS`, `FRONTEND_URL`, plus optional `SPRING_MAIL_HOST`,
+`SPRING_MAIL_PORT`, `SPRING_MAIL_USERNAME`, `SPRING_MAIL_PASSWORD`, and
+`PASSWORD_RESET_FROM`. `SPRING_DATASOURCE_URL` must point at the service's own
+managed database. Never put credentials in the repository.
 
-This is a portfolio / demonstration project deployed on free infrastructure.
-The ephemeral limitation does not affect the application's correctness — it is
-a platform constraint of Render's free tier, not a bug.
+Flyway owns the schema (V1–V7) with Hibernate `validate`. Do not run
+`database/schema.sql` or use a root account against a deployed database. Take a
+backup before any migration and verify `flyway_schema_history` afterwards.
 
----
+### Frontend (Vercel)
 
-## 3. Step-by-step: Render environment variables
+Set in the dashboard: Root Directory `frontend`, Node version from
+`^20.19.0 || ^22.13.0 || >=24.0.0` (CI pins 22.13.0), Install Command `npm ci`,
+Build Command `npm run build`, Output Directory `dist`. `frontend/vercel.json`
+declares framework `vite`, the SPA rewrite `/(.*)` → `/index.html`, and
+`git.deploymentEnabled` `false` for `main` and `preview/verify-deployment`. Pull
+branches remain enabled for Vercel preview comments.
 
-> ⚠️ **You must do this in the Render dashboard.** Never commit secrets to Git.
+For Production **and** Preview, set build-time `VITE_API_BASE_URL` to an absolute
+HTTPS URL ending in `/api` (for example `https://<backend-origin>/api`). Never use
+a localhost URL and never treat this value as a secret. Same-origin `/api` is
+valid only if a real reverse proxy exists and `VITE_API_PROXY_MODE=same-origin`
+is set; the Vercel SPA rewrite alone is not an API proxy. Vite bakes the URL into
+`dist`, so a change requires a rebuild.
 
-1. Go to [dashboard.render.com](https://dashboard.render.com).
-2. Select your **autoscientist-ai-backend** service.
-3. Click **Environment** in the left menu.
-4. Verify or set the following variables:
+## 4. GitHub Actions CI and gated deploys
 
-| Variable | Value |
-|----------|-------|
-| `SPRING_PROFILES_ACTIVE` | `mysql` |
-| `SPRING_DATASOURCE_URL` | `jdbc:mysql://<aiven-host>:<port>/<database>?sslMode=REQUIRED&serverTimezone=UTC` |
-| `SPRING_DATASOURCE_USERNAME` | *(your Aiven DB username)* |
-| `SPRING_DATASOURCE_PASSWORD` | *(your Aiven DB password)* |
-| `JWT_SECRET` | *(base64-encoded, ≥ 64 bytes decoded)* |
-| `APP_CORS_ALLOWED_ORIGINS` | `https://auto-scientist-ai-ten.vercel.app` |
-| `FRONTEND_URL` | `https://auto-scientist-ai-ten.vercel.app` |
-| `FILE_UPLOAD_DIR` | `/app/uploads/datasets` *(already set in Dockerfile; optional override)* |
+`.github/workflows/ci.yml` runs on pull requests targeting `main` or
+`preview/verify-deployment`, and on pushes to those two branches. Every run
+executes:
 
-**Variables to REMOVE (no longer used):**
+- Backend tests, `DeploymentProfileGuardTest`, packaging, and an assertion that
+  Flyway V1–V7 are present in the JAR (Java 17).
+- Frontend `npm ci`, lint, tests, `npm audit`, production build, and a check that
+  no local API URL is baked into `dist` (Node 22.13.0).
+- Docker builds for both matched Docker pairs.
+- Real MySQL 8.4 migration and runtime smoke tests.
+- Tracked secret/artifact scan and OSV dependency scan.
+- `scripts/validate-deployment-config.sh` deployment-config validation.
+- Workflow syntax validation with pinned actionlint 1.7.12.
 
-| Variable | Reason |
-|----------|--------|
-| `STORAGE_BACKEND` | Removed — only local storage exists now |
-| `STORAGE_S3_BUCKET` | Removed — S3 backend was deleted |
-| `STORAGE_S3_ENDPOINT` | Removed |
-| `STORAGE_S3_REGION` | Removed |
-| `STORAGE_S3_ACCESS_KEY` | Removed |
-| `STORAGE_S3_SECRET_KEY` | Removed |
+Deploy jobs depend on **all** of these checks and are gated by event and branch:
 
-5. Click **Save Changes**. Render will trigger a new deployment.
+| Job | Condition | Secrets | Variables |
+|---|---|---|---|
+| `deploy-preview` | push to `preview/verify-deployment` and `PREVIEW_DEPLOY_ENABLED == 'true'` | `RENDER_PREVIEW_DEPLOY_HOOK_URL`, `VERCEL_PREVIEW_DEPLOY_HOOK_URL` | `PREVIEW_BACKEND_HEALTH_URL`, `PREVIEW_FRONTEND_HEALTH_URL` |
+| `deploy-production` | push to `main` and `PRODUCTION_DEPLOY_ENABLED == 'true'` | `RENDER_PRODUCTION_DEPLOY_HOOK_URL`, `VERCEL_PRODUCTION_DEPLOY_HOOK_URL` | `PRODUCTION_BACKEND_HEALTH_URL`, `PRODUCTION_FRONTEND_HEALTH_URL` |
 
-### What happens when the backend starts
+This is how CI failures prevent deployment: a failed check means `needs` is not
+satisfied and no deploy hook is called. A pull request never triggers a deploy
+job. Health URLs are repository variables and each URL is polled up to 30 times
+at 10-second intervals (about five minutes). Provider Git auto-deploy must stay off for `main`
+and `preview/verify-deployment` to avoid duplicate deployments. Confirm the hook
+targets and connected branches in the provider dashboards; they cannot be
+verified from the repository.
 
-1. `docker-entrypoint.sh` creates `/app/uploads/datasets` and verifies it is writable.
-2. Spring Boot reads `FILE_UPLOAD_DIR=/app/uploads/datasets`.
-3. `StorageConfig` creates a `LocalStorageBackend` pointing at that directory.
-4. `FileStorageService` logs: `FileStorageService ready — backend: local:/app/uploads/datasets`
-5. `GET /api/health/ready` checks MySQL connectivity and upload directory accessibility.
+## 5. Preview deployment procedure
 
----
+1. Verify Java 17 locally before any Maven command (on macOS:
+   `export JAVA_HOME="$(/usr/libexec/java_home -v 17)"`).
+2. Run the local checks and stage/push only reviewed files to
+   `preview/verify-deployment` (see §11).
+3. Watch the CI run: all check jobs must pass. Any failure stops the deploy.
+4. On a successful push, `deploy-preview` calls the Render and Vercel preview
+   hooks and polls `PREVIEW_BACKEND_HEALTH_URL` and
+   `PREVIEW_FRONTEND_HEALTH_URL`.
+5. In the Render dashboard confirm the preview service is on
+   `preview/verify-deployment`, uses the MySQL profile, has its own database and
+   persistent disk at `/app/uploads`, and reports
+   `GET /api/health/ready` as healthy.
+6. In the Vercel dashboard confirm the Preview build used Root Directory
+   `frontend` and a non-local HTTPS `VITE_API_BASE_URL` ending in `/api`.
+7. Run the smoke checks in §7 against the preview URLs. Use throwaway data only.
 
-## 4. Step-by-step: GitHub push and merge
+## 6. Production deployment procedure
 
-The feature branch should be pushed to GitHub first:
+1. Keep `main` changes limited to commits already green on
+   `preview/verify-deployment`; back up the production database and uploads.
+2. Open a pull request from `preview/verify-deployment` to `main` and require all
+   CI checks to pass. Pull requests do not deploy.
+3. Merge into `main` and push the merge commit. Only a **push** to `main` with
+   `PRODUCTION_DEPLOY_ENABLED == 'true'` triggers `deploy-production`.
+4. The job calls the production deploy hooks and polls
+   `PRODUCTION_BACKEND_HEALTH_URL` and `PRODUCTION_FRONTEND_HEALTH_URL`.
+5. Confirm in the provider dashboards: service branch `main`, separate production
+   MySQL database, durable disk at `/app/uploads`, health check path
+   `/api/health/ready`, auto-deploy off, Vercel root `frontend`, and the intended
+   build-time API URL for Production **and** Preview.
+6. Run §7 smoke checks with a throwaway account and dataset. Do not use real
+   production user data for destructive tests.
+
+## 7. Post-deployment verification
+
+Use the URLs from the repository variables (placeholders shown here are not
+deployed endpoints):
 
 ```bash
-# Verify what will be pushed
-git log --oneline origin/fix-dataset-storage-reliability..HEAD
+BACKEND=https://<backend-origin>/api          # from PREVIEW_/PRODUCTION_BACKEND_HEALTH_URL
+FRONTEND=https://<frontend-origin>            # from PREVIEW_/PRODUCTION_FRONTEND_HEALTH_URL
 
-# Push the branch
-git push origin fix-dataset-storage-reliability
+curl -fsS "$BACKEND/health"                   # liveness: status UP
+curl -fsS "$BACKEND/health/ready"             # readiness: status/database/storage/migrations/timestamp
+curl -fsS -o /dev/null -w '%{http_code}\n' "$BACKEND/datasets"   # expect 401, not 500
+curl -fsS -o /dev/null -w '%{http_code}\n' "$FRONTEND/"          # SPA root loads
+curl -fsS -o /dev/null -w '%{http_code}\n' "$FRONTEND/some/deep/route"  # SPA rewrite
 ```
 
-Then merge via GitHub Pull Request:
+- [ ] Liveness returns HTTP 200 with `data.status: "UP"`.
+- [ ] Readiness returns HTTP 200 with `data.database` and `data.storage` both `UP`;
+      expect HTTP 503 if either is down. There is no `storageBackend` field.
+- [ ] Register/login works; a deployed bundle contains no localhost API URL.
+- [ ] Upload a small CSV; verify the file lands on the persistent disk.
+- [ ] Run EDA and AutoML; use Ask Dataset; generate an export.
+- [ ] Restart/redeploy the backend and confirm the same dataset still downloads.
+- [ ] Confirm `APP_CORS_ALLOWED_ORIGINS` and `FRONTEND_URL` match the real frontend origin.
+- [ ] Confirm `flyway_schema_history` contains V1–V7 and Hibernate validation passed.
+- [ ] Confirm exactly one deployment per push (no provider auto-deploy duplicates).
 
-1. Go to https://github.com/bharad1101/AutoScientist-AI
-2. Click **Compare & pull request** for `fix-dataset-storage-reliability`
-3. Review the diff
-4. Merge into `main`
+## 8. Rollback
 
-> ⛔ **Do not force-push. Do not push directly to main without reviewing.**
+1. Record the current commit SHA, image digest, frontend deployment ID, and
+   database backup identifier before deploying.
+2. If a container will not start, redeploy the previous known-good commit via
+   the provider dashboard or revert the commit and push to trigger CI again.
+   Migrations are additive-only; there are no down-migrations.
+3. Decide deliberately whether a database restore is required; restoring without
+   a data-loss assessment can discard newer user data.
+4. Re-run §7 after rollback. If `JWT_SECRET` changed, expect users to be logged out.
 
----
+## 9. Environment variable reference
 
-## 5. Vercel — no changes required
+Names are exact; values are supplied in provider secret settings or gitignored
+local `.env` files. See `docs/DEPLOYMENT.md` §2 for local examples and defaults.
 
-The frontend connects to the backend via `VITE_API_BASE_URL` (set as a build-time
-environment variable in the Vercel dashboard). The storage simplification is
-entirely backend-side. No Vercel changes are needed.
+| Variable | Required | Purpose |
+|---|---|---|
+| `SPRING_PROFILES_ACTIVE` | Yes (deployed) | `mysql` in deployed services; `dev` is local-only |
+| `SPRING_DATASOURCE_URL` | Yes (mysql) | JDBC URL for the service's own managed MySQL database |
+| `SPRING_DATASOURCE_USERNAME` | Yes (mysql) | Database user |
+| `SPRING_DATASOURCE_PASSWORD` | Yes (mysql) | Database password (secret) |
+| `JWT_SECRET` | Yes (mysql) | Base64 HS256 key; at least 32 decoded bytes enforced, 64 random bytes recommended |
+| `APP_CORS_ALLOWED_ORIGINS` | Yes (mysql) | Exact frontend origin(s), comma-separated |
+| `FRONTEND_URL` | Yes | Public frontend origin for password-reset links |
+| `FILE_UPLOAD_DIR` | Optional in image | `/app/uploads/datasets` in the container |
+| `SPRING_JPA_HIBERNATE_DDL_AUTO` | Optional | `validate` in `mysql` |
+| `SPRING_FLYWAY_ENABLED` | Optional | Enabled in `mysql` |
+| `RATE_LIMIT_ENABLED` | Optional | Provider default in `render.yaml` |
+| `ALLOW_PROXY_HEADERS` | Optional | Trust provider proxy headers |
+| `FORWARD_HEADERS_STRATEGY` | Optional | Provider header strategy |
+| `TRUSTED_PROXY_COUNT` | Optional | Number of trusted proxy hops |
+| `SPRING_MAIL_HOST`, `SPRING_MAIL_PORT`, `SPRING_MAIL_USERNAME`, `SPRING_MAIL_PASSWORD` | Conditional | Delivered password-reset email |
+| `PASSWORD_RESET_FROM`, `PASSWORD_RESET_TTL_MINUTES`, `PASSWORD_RESET_MIN_INTERVAL_SECONDS` | Conditional | Password-reset sender and policy |
+| `VITE_API_BASE_URL` | Yes (frontend build) | Absolute HTTPS URL ending in `/api` for Production and Preview; not a secret |
+| `VITE_API_PROXY_MODE` | Conditional | `same-origin` only with a real reverse proxy |
+| `PREVIEW_DEPLOY_ENABLED`, `PRODUCTION_DEPLOY_ENABLED` | Yes (GitHub variables) | Enable the corresponding deploy job |
+| `PREVIEW_BACKEND_HEALTH_URL`, `PREVIEW_FRONTEND_HEALTH_URL`, `PRODUCTION_BACKEND_HEALTH_URL`, `PRODUCTION_FRONTEND_HEALTH_URL` | Yes (GitHub variables) | Post-deploy health polling |
+| `RENDER_PREVIEW_DEPLOY_HOOK_URL`, `VERCEL_PREVIEW_DEPLOY_HOOK_URL`, `RENDER_PRODUCTION_DEPLOY_HOOK_URL`, `VERCEL_PRODUCTION_DEPLOY_HOOK_URL` | Yes (GitHub secrets) | Provider deploy hooks |
 
-Verify this variable is set in Vercel:
-```
-VITE_API_BASE_URL=https://autoscientist-ai-backend.onrender.com/api
-```
+## 10. Security and local artifacts
 
----
+- No production credentials are hardcoded. The `dev` profile generates a
+  local-only signing secret; hosted runtimes refuse that profile.
+- No S3/R2 secrets exist; storage is local filesystem with a provider disk.
+- Ignored local secrets/data/artifacts (`.env`, `uploads/`, `backups/`, `target/`,
+  `dist/`, `node_modules/`, `*.mv.db`) remain local and must not be staged.
+- Path traversal is rejected; only `.csv`, `.xls`, `.xlsx` are accepted; uploads
+  are bounded (50 MB default for multipart and `resource-budget.max-mb`).
+- JWT uses HS256; rotating `JWT_SECRET` invalidates existing tokens.
+- CORS uses `APP_CORS_ALLOWED_ORIGINS` with exact origins. `/actuator/info` is
+  deliberately not public.
 
-## 6. Post-deployment verification checklist
+## 11. Exact staging, commit and push commands
 
-After Render redeploys:
-
-- [ ] **Health liveness:** `curl https://autoscientist-ai-backend.onrender.com/api/health`  
-  Expected: `{"success":true,"data":{"status":"UP",...}}`
-
-- [ ] **Health readiness:** `curl https://autoscientist-ai-backend.onrender.com/api/health/ready`  
-  Expected: `{"success":true,"data":{"status":"UP","database":"UP","storage":"UP","storageBackend":"local:/app/uploads/datasets",...}}`
-
-- [ ] **Register / Login:** Create an account or log in at the frontend.
-
-- [ ] **Upload a dataset:** Datasets → Import → Upload a small CSV.
-
-- [ ] **Preview data:** Verify columns and rows display correctly.
-
-- [ ] **Run EDA** on the uploaded dataset.
-
-- [ ] **Run AutoML** on the uploaded dataset.
-
-- [ ] **Try Ask Dataset** on the uploaded dataset.
-
----
-
-## 7. Rollback procedure
-
-### If the deployment fails (container won't start)
-
-1. In Render: **Manual Deploy** → select the previous successful deploy commit.
-2. That restores the `main` branch behaviour.
-
-### Git rollback (last resort)
+Documentation only — these commands were **not run** in this worktree.
 
 ```bash
-git revert HEAD --no-edit
-git push origin fix-dataset-storage-reliability
+# Check what is present before staging; ignored local files stay local.
+git status --short
+git diff --check
+git add README.md DEPLOYMENT_GUIDE.md docs/DEPLOYMENT.md docs/ARCHITECTURE.md docs/TROUBLESHOOTING.md release-readiness/CANONICAL_DEPLOYMENT_CHECKLIST.md release-readiness/FINAL_RELEASE_REPORT.md
+git diff --cached --check
+git commit -m "docs: align deployment guidance with CI-gated deploys"
+git push origin preview/verify-deployment
 ```
 
----
+For a full release commit, explicitly stage the reviewed implementation and
+deployment files (including untracked `.github/workflows/ci.yml`, `render.yaml`,
+`scripts/validate-deployment-config.sh`, `backend/.mvn/`, `backend/mvnw.cmd`,
+`frontend/vercel.json`, and `frontend/eslint.config.js`), then push to
+`preview/verify-deployment` and open a pull request to `main`. Never use
+`git add -A` while ignored secrets, data, or build artifacts exist locally.
 
-## 8. Environment variable reference
+## 12. Scope of this documentation pass
 
-These are the **exact** environment variable names used in the source code,
-verified against `application.yml` and `StorageConfig.java`:
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `FILE_UPLOAD_DIR` | No | `/app/uploads/datasets` (Docker) | Local filesystem path for dataset files |
-| `SPRING_DATASOURCE_URL` | Yes (mysql) | — | Aiven MySQL JDBC URL |
-| `SPRING_DATASOURCE_USERNAME` | Yes (mysql) | — | DB username |
-| `SPRING_DATASOURCE_PASSWORD` | Yes (mysql) | — | DB password |
-| `JWT_SECRET` | Yes (mysql) | — | Base64-encoded JWT signing key (≥ 64 bytes) |
-| `APP_CORS_ALLOWED_ORIGINS` | Yes (mysql) | — | e.g. `https://auto-scientist-ai-ten.vercel.app` |
-| `FRONTEND_URL` | Yes | `http://localhost:5173` | Password reset redirect base URL |
-| `SPRING_PROFILES_ACTIVE` | Yes | `dev` | Use `mysql` for production |
-| `PORT` | No | `8080` | HTTP listen port |
-
----
-
-## 9. Security notes
-
-- ✅ No credentials are hardcoded in any source file.
-- ✅ No S3/R2 secrets exist anywhere in the codebase.
-- ✅ `.env` files are excluded from Git via `.gitignore`.
-- ✅ Path traversal protection is enforced: keys containing `..`, `/`, or `\` are rejected.
-- ✅ File type validation: only `.csv`, `.xls`, `.xlsx` are accepted.
-- ✅ File size limit: 50 MB (Spring multipart config in `application.yml`).
-- ✅ JWT and authentication configuration is unchanged.
-- ✅ CORS configuration is unchanged.
-
----
-
-## 10. Changed files summary
-
-All changes are on branch `fix-dataset-storage-reliability` relative to `main`.
-
-| File | Change |
-|------|--------|
-| `backend/pom.xml` | **Removed** `software.amazon.awssdk:s3` dependency |
-| `backend/src/.../util/S3StorageBackend.java` | **Deleted** — S3 backend removed |
-| `backend/src/.../config/StorageConfig.java` | Simplified to local-only (removed S3 selection logic) |
-| `backend/src/.../util/StorageBackend.java` | Cleaned javadoc (removed S3 references) |
-| `backend/src/.../util/FileStorageService.java` | Cleaned javadoc (removed S3 references) |
-| `backend/src/main/resources/application.yml` | **Removed** `app.storage.*` config block (S3 keys) |
-| `backend/docker-entrypoint.sh` | Simplified: removed `STORAGE_BACKEND` check and S3 bypass |
-| `backend/.env.example` | Rewritten for local-only storage with ephemeral limitation note |
-| `Dockerfile` | Removed misleading `VOLUME ["/app/uploads"]` directive |
-| `DEPLOYMENT_GUIDE.md` | Rewritten for Render local-only architecture |
-
-Files **unchanged** from `main` (verified correct as-is):
-
-| File | Reason |
-|------|--------|
-| `backend/src/.../util/LocalStorageBackend.java` | Already implements local storage correctly |
-| `backend/src/.../controller/HealthController.java` | Already reports local storage health |
-| `frontend/` (all files) | No storage-related changes needed |
-
----
-
-## 11. Test results
-
-Verified locally after all S3 removal changes:
-
-| Check | Result |
-|-------|--------|
-| `./mvnw clean test` | ✅ **130 tests, 0 failures, 0 errors, 2 skipped** |
-| `./mvnw clean package` | ✅ **BUILD SUCCESS** — `autoscientist-backend-1.0.0-SNAPSHOT.jar` |
-| `npm run build` | ✅ **129 modules, 0 errors** |
-| Secret scan | ✅ No hardcoded credentials |
-
-The 2 skipped tests are `PasswordResetIntegrationTest` variants that require
-SMTP transport — expected and unchanged from the `main` branch.
+The seven documentation files listed in §11 were updated to match the current
+configuration. Earlier claims that ephemeral storage is acceptable, that the
+readiness payload contains `storageBackend`, that Node 22.12+ is required, that
+CI does not deploy, and that provider Git auto-deploy drives `main`/preview are
+superseded. Local tests and CI results are evidence only for the revision that
+produced them; no provider deployment has been verified from this worktree.

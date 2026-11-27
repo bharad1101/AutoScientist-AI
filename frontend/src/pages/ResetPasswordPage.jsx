@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { authService } from '../services/authService';
+import { getApiErrorMessage } from '../services/apiErrors';
 
 const ResetPasswordPage = () => {
   const location = useLocation();
@@ -32,14 +33,7 @@ const ResetPasswordPage = () => {
       setSuccess(true);
       setTimeout(() => navigate('/login', { replace: true }), 2200);
     } catch (err) {
-      if (!err.response) {
-        setError('Unable to connect to AutoScientist server. Please verify the backend is running.');
-      } else if (err.response.status === 400 && err.response.data?.data) {
-        const fieldError = Object.values(err.response.data.data)[0];
-        setError(fieldError || err.response.data?.message || 'Could not reset the password.');
-      } else {
-        setError(err.response?.data?.message || err.message || 'Could not reset the password.');
-      }
+      setError(getApiErrorMessage(err, 'Could not reset the password.'));
     } finally {
       setSubmitting(false);
     }

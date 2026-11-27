@@ -1,21 +1,14 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Bar } from 'react-chartjs-2';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  PointElement,
-  Tooltip,
-  Legend,
-} from 'chart.js';
+import '../utils/chartSetup';
 import { analysisService } from '../services/analysisService';
 import { datasetService } from '../services/datasetService';
 import WorkflowNavigator from '../components/WorkflowNavigator';
 import { useWorkflow } from '../context/WorkflowContext';
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, Tooltip, Legend);
+const CI_CHART_LIMIT = 100;
+const ASSOCIATION_PAGE_SIZE = 50;
 
 // Error boundary to prevent any chart or runtime exception from causing an unexplained blank page
 class AssociationsErrorBoundary extends React.Component {
@@ -77,22 +70,22 @@ const AssociationsPageContent = () => {
   const [error, setError] = useState('');
   const [filterSigOnly, setFilterSigOnly] = useState(false);
   const [filterTestType, setFilterTestType] = useState('ALL');
+  const [page, setPage] = useState(1);
 
-  const inFlightRef = useRef(false);
+  const requestIdRef = useRef(0);
 
   const fetchData = async () => {
-    if (inFlightRef.current) return;
-    inFlightRef.current = true;
+    const requestId = ++requestIdRef.current;
     try {
       setLoading(true);
       setError('');
       let targetId = currentId;
       if (!targetId) {
         const allDs = await datasetService.listDatasets();
+        if (requestId !== requestIdRef.current) return;
         if (allDs && allDs.data && allDs.data.length > 0) {
           targetId = allDs.data[0].id;
         } else {
-          setLoading(false);
           setDataset(null);
           setAssociations([]);
           return;
@@ -108,6 +101,8 @@ const AssociationsPageContent = () => {
         analysisService.getAssociations(targetId),
       ]);
 
+      if (requestId !== requestIdRef.current) return;
+
       if (dsRes && dsRes.data) setDataset(dsRes.data);
       if (assocRes && assocRes.data) {
         setAssociations(Array.isArray(assocRes.data) ? assocRes.data : []);
@@ -115,16 +110,17 @@ const AssociationsPageContent = () => {
         setAssociations([]);
       }
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       console.error('Failed to load associations:', err);
       setError(
         err.response?.data?.message ||
-        err.message ||
         'Failed to load statistical associations.'
       );
       setAssociations([]);
     } finally {
-      setLoading(false);
-      inFlightRef.current = false;
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -135,19 +131,25 @@ const AssociationsPageContent = () => {
   const handleRefresh = async () => {
     const targetId = currentId || dataset?.id;
     if (!targetId) return;
+    const requestId = ++requestIdRef.current;
     try {
       setRefreshing(true);
       setError('');
       const res = await analysisService.refreshAssociations(targetId);
+      if (requestId !== requestIdRef.current) return;
       if (res && res.data) {
         setAssociations(Array.isArray(res.data) ? res.data : []);
         if (refreshWorkflowStatus) refreshWorkflowStatus();
       }
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       console.error('Failed to refresh associations:', err);
-      setError(err.response?.data?.message || err.message || 'Failed to refresh associations.');
+      setError(err.response?.data?.message || 'Failed to refresh associations.');
     } finally {
-      setRefreshing(false);
+      if (requestId === requestIdRef.current) {
+        setRefreshing(false);
+        setLoading(false);
+      }
     }
   };
 
@@ -166,6 +168,17 @@ const AssociationsPageContent = () => {
       return true;
     });
   }, [associations, filterSigOnly, filterTestType]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredAssociations.length / ASSOCIATION_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageRows = useMemo(() => {
+    const start = (safePage - 1) * ASSOCIATION_PAGE_SIZE;
+    return filteredAssociations.slice(start, start + ASSOCIATION_PAGE_SIZE);
+  }, [filteredAssociations, safePage]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filterSigOnly, filterTestType, currentId]);
 
   const getTestBadge = (type) => {
     switch (type) {
@@ -225,14 +238,21 @@ const AssociationsPageContent = () => {
     }
   }, [ciTestTypes, ciTestType]);
 
+  const activeCiTestType = ciTestTypes.includes(ciTestType) ? ciTestType : (ciTestTypes[0] ?? '');
+
   const activeCiRows = useMemo(
-    () => ciRows.filter((r) => r.testType === ciTestType),
-    [ciRows, ciTestType]
+    () => ciRows.filter((r) => r.testType === activeCiTestType),
+    [ciRows, activeCiTestType]
+  );
+
+  const chartCiRows = useMemo(
+    () => activeCiRows.slice(0, CI_CHART_LIMIT),
+    [activeCiRows]
   );
 
   const ciChartData = useMemo(() => {
-    if (!activeCiRows.length) return null;
-    const validRows = activeCiRows.filter(
+    if (!chartCiRows.length) return null;
+    const validRows = chartCiRows.filter(
       (r) =>
         r.ciLower != null &&
         r.ciUpper != null &&
@@ -267,7 +287,7 @@ const AssociationsPageContent = () => {
         },
       ],
     };
-  }, [activeCiRows]);
+  }, [chartCiRows]);
 
   const ciMethodNote = useMemo(() => {
     const sample = activeCiRows[0];
@@ -406,7 +426,7 @@ const AssociationsPageContent = () => {
               {ciTestTypes.length > 1 && (
                 <select
                   className="form-select form-select-sm w-auto"
-                  value={ciTestType}
+                  value={activeCiTestType}
                   onChange={(e) => setCiTestType(e.target.value)}
                   aria-label="Select the test architecture to plot intervals for"
                 >
@@ -421,9 +441,9 @@ const AssociationsPageContent = () => {
             <div className="card-body">
               {ciChartData ? (
                 <>
-                  <div style={{ height: `${Math.max(220, activeCiRows.length * 46)}px` }}>
+                  <div style={{ height: `${Math.max(220, chartCiRows.length * 46)}px` }}>
                     <Bar
-                      key={`ci-bar-${ciTestType}-${activeCiRows.length}`}
+                      key={`ci-bar-${activeCiTestType}-${chartCiRows.length}`}
                       data={ciChartData}
                       options={{
                         indexAxis: 'y',
@@ -436,7 +456,7 @@ const AssociationsPageContent = () => {
                             title: {
                               display: true,
                               text:
-                                ciTestType === 'PEARSON'
+                                activeCiTestType === 'PEARSON'
                                   ? 'Pearson r'
                                   : 'Mean difference (group 1 − group 2)',
                             },
@@ -446,6 +466,13 @@ const AssociationsPageContent = () => {
                       }}
                     />
                   </div>
+                  {activeCiRows.length > chartCiRows.length && (
+                    <p className="small text-muted mb-0 mt-2" data-testid="ci-chart-truncation-note">
+                      <i className="bi bi-info-circle me-1"></i>
+                      Displaying the top {chartCiRows.length} of {activeCiRows.length} intervals by association rank.
+                      All {activeCiRows.length} intervals remain available in the table below.
+                    </p>
+                  )}
                   {ciMethodNote && (
                     <p className="small text-muted mb-0 mt-2">
                       <i className="bi bi-info-circle me-1"></i>
@@ -548,7 +575,7 @@ const AssociationsPageContent = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredAssociations.map((a) => (
+                  {pageRows.map((a) => (
                     <tr key={a.id || `${a.var1}-${a.var2}`} className={a.isSignificant ? 'table-light' : ''}>
                       <td className="ps-3 fw-bold text-dark">{a.var1}</td>
                       <td className="fw-bold text-dark">{a.var2}</td>
@@ -611,6 +638,34 @@ const AssociationsPageContent = () => {
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div className="card-footer bg-white d-flex flex-wrap justify-content-between align-items-center gap-2 py-3">
+              <span className="small text-muted" data-testid="associations-page-summary">
+                Rows {(safePage - 1) * ASSOCIATION_PAGE_SIZE + 1}–
+                {Math.min(safePage * ASSOCIATION_PAGE_SIZE, filteredAssociations.length)} of{' '}
+                {filteredAssociations.length} matching pairings
+                {totalPages > 1 ? ` (page ${safePage} of ${totalPages})` : ''}
+              </span>
+              {totalPages > 1 && (
+                <div className="btn-group btn-group-sm" role="group" aria-label="Association result pages">
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary"
+                    onClick={() => setPage((p) => Math.max(1, Math.min(p, totalPages) - 1))}
+                    disabled={safePage <= 1}
+                  >
+                    <i className="bi bi-chevron-left me-1"></i> Previous
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary"
+                    onClick={() => setPage((p) => Math.min(totalPages, Math.min(p, totalPages) + 1))}
+                    disabled={safePage >= totalPages}
+                  >
+                    Next <i className="bi bi-chevron-right ms-1"></i>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}

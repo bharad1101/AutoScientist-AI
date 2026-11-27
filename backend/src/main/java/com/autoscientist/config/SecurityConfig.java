@@ -2,8 +2,10 @@ package com.autoscientist.config;
 
 import com.autoscientist.security.AuthEntryPointJwt;
 import com.autoscientist.security.AuthTokenFilter;
+import com.autoscientist.security.RateLimitingFilter;
 import com.autoscientist.security.UserDetailsServiceImpl;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
@@ -30,6 +32,7 @@ public class SecurityConfig {
 
     private final UserDetailsServiceImpl userDetailsService;
     private final AuthEntryPointJwt unauthorizedHandler;
+    private final RateLimitingFilter rateLimitingFilter;
     private final Environment environment;
 
     @Bean
@@ -40,9 +43,8 @@ public class SecurityConfig {
     @Bean
     public DaoAuthenticationProvider authenticationProvider() {
         DaoAuthenticationProvider provider =
-                new DaoAuthenticationProvider();
+                new DaoAuthenticationProvider(userDetailsService);
 
-        provider.setUserDetailsService(userDetailsService);
         provider.setPasswordEncoder(passwordEncoder());
 
         return provider;
@@ -60,16 +62,26 @@ public class SecurityConfig {
     }
 
     @Bean
+    public FilterRegistrationBean<RateLimitingFilter> rateLimitingFilterRegistration(RateLimitingFilter filter) {
+        FilterRegistrationBean<RateLimitingFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    @Bean
     public SecurityFilterChain filterChain(HttpSecurity http)
             throws Exception {
 
         http
             .cors(Customizer.withDefaults())
             .csrf(AbstractHttpConfigurer::disable)
-            .headers(headers ->
-                headers.frameOptions(frameOptions ->
-                    frameOptions.sameOrigin()
-                )
+            .headers(headers -> headers
+                .frameOptions(frameOptions -> frameOptions.sameOrigin())
+                .contentTypeOptions(Customizer.withDefaults())
+                .xssProtection(Customizer.withDefaults())
+                .httpStrictTransportSecurity(hsts -> hsts
+                    .includeSubDomains(true)
+                    .maxAgeInSeconds(31536000))
             )
             .exceptionHandling(exception ->
                 exception.authenticationEntryPoint(unauthorizedHandler)
@@ -84,7 +96,15 @@ public class SecurityConfig {
                     "/",
                     "/api/health",
                     "/api/health/ready",
-                    "/api/auth/**",
+                    "/actuator/health",
+                    // /actuator/info is deliberately not public: dev-style
+                    // info.env settings could otherwise expose environment data.
+                    // Public authentication entry points only. /api/auth/me and
+                    // /api/auth/logout remain authenticated.
+                    "/api/auth/register",
+                    "/api/auth/login",
+                    "/api/auth/forgot-password",
+                    "/api/auth/reset-password",
                     "/error"
                 ).permitAll();
 
@@ -101,6 +121,7 @@ public class SecurityConfig {
             authenticationJwtTokenFilter(),
             UsernamePasswordAuthenticationFilter.class
         );
+        http.addFilterAfter(rateLimitingFilter, AuthTokenFilter.class);
 
         return http.build();
     }

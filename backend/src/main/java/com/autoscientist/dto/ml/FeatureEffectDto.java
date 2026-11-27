@@ -19,6 +19,13 @@ public class FeatureEffectDto {
     private Double referenceValue;
     private Double referencePrediction;
     private String referenceClass;
+    private Boolean binaryClassification;
+    private Integer positiveClassIndex;
+    private String positiveClassLabel;
+    private Integer probabilityClassIndex;
+    private String probabilityClassLabel;
+    private String probabilityStatus;
+    private Double decisionThreshold;
     private List<FeatureEffectPointDto> points;
     private List<FeatureEffectCategoryDto> categories;
     private boolean supported;

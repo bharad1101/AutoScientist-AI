@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Bar, Line, Scatter } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -126,24 +126,12 @@ export default function EdaGallery({ datasetId, columns = [] }) {
     setDensityCatVar(catCols[0]?.columnName || '');
   }, [datasetId, columns, numCols, catCols]);
 
-  const safeCall = useCallback(async (fn, setter, setLoading, setErr, label) => {
-    if (!datasetId) return;
-    try {
-      setLoading(true);
-      setErr('');
-      const res = await fn();
-      setter(res?.data ?? []);
-    } catch (err) {
-      setErr(err.response?.data?.message || `Unable to compute ${label}.`);
-    } finally {
-      setLoading(false);
-    }
-  }, [datasetId]);
-
   useEffect(() => {
     let active = true;
     if (!datasetId || numCols.length === 0) {
       setHistograms([]);
+      setHistLoading(false);
+      setHistError('');
       return;
     }
     (async () => {
@@ -167,6 +155,8 @@ export default function EdaGallery({ datasetId, columns = [] }) {
     let active = true;
     if (!datasetId) {
       setMissingness([]);
+      setMissingLoading(false);
+      setMissingError('');
       return;
     }
     (async () => {
@@ -190,6 +180,8 @@ export default function EdaGallery({ datasetId, columns = [] }) {
     let active = true;
     if (!datasetId || catCols.length === 0) {
       setCategorical([]);
+      setCatLoading(false);
+      setCatError('');
       return;
     }
     (async () => {
@@ -213,6 +205,8 @@ export default function EdaGallery({ datasetId, columns = [] }) {
     let active = true;
     if (!datasetId || !scatterX || !scatterY || scatterX === scatterY) {
       setScatter(null);
+      setScatterLoading(false);
+      setScatterError('');
       return;
     }
     (async () => {
@@ -239,6 +233,8 @@ export default function EdaGallery({ datasetId, columns = [] }) {
     let active = true;
     if (!datasetId || !timeVar || !valueVar) {
       setSeries([]);
+      setSeriesLoading(false);
+      setSeriesError('');
       return;
     }
     (async () => {
@@ -265,6 +261,8 @@ export default function EdaGallery({ datasetId, columns = [] }) {
     let active = true;
     if (!datasetId || !densityNumVar || !densityCatVar) {
       setGroupDistributions([]);
+      setDensityLoading(false);
+      setDensityError('');
       return;
     }
     (async () => {
@@ -291,6 +289,8 @@ export default function EdaGallery({ datasetId, columns = [] }) {
     let active = true;
     if (!datasetId) {
       setMissingMatrix(null);
+      setMatrixLoading(false);
+      setMatrixError('');
       return;
     }
     (async () => {
@@ -313,8 +313,10 @@ export default function EdaGallery({ datasetId, columns = [] }) {
     };
   }, [datasetId]);
 
-  const activeHistogram = histograms.find((h) => h.variable === histVar) || histograms[0];
-  const activeCategorical = categorical.find((c) => c.variable === catVar) || categorical[0];
+  const activeHistogram = histograms.find((h) => h.variable === histVar) || histograms[0] || null;
+  const activeCategorical = categorical.find((c) => c.variable === catVar) || categorical[0] || null;
+  const effectiveHistVar = activeHistogram?.variable || histVar;
+  const effectiveCatVar = activeCategorical?.variable || catVar;
 
   const histData = activeHistogram
     ? {
@@ -472,7 +474,7 @@ export default function EdaGallery({ datasetId, columns = [] }) {
         subtitle="Empirical histograms computed from every numeric, non-identifier column (up to 20 bins)."
         actions={
           numCols.length > 0 && (
-            <select className={selectClass} value={histVar} onChange={(e) => setHistVar(e.target.value)}>
+            <select className={selectClass} value={effectiveHistVar} onChange={(e) => setHistVar(e.target.value)}>
               {numCols.map((c) => (
                 <option key={c.columnName} value={c.columnName}>{c.columnName}</option>
               ))}
@@ -729,7 +731,7 @@ export default function EdaGallery({ datasetId, columns = [] }) {
         subtitle="Top categories and their observed frequencies (up to 30 categories)."
         actions={
           catCols.length > 0 && (
-            <select className={selectClass} value={catVar} onChange={(e) => setCatVar(e.target.value)}>
+            <select className={selectClass} value={effectiveCatVar} onChange={(e) => setCatVar(e.target.value)}>
               {catCols.map((c) => <option key={c.columnName} value={c.columnName}>{c.columnName}</option>)}
             </select>
           )

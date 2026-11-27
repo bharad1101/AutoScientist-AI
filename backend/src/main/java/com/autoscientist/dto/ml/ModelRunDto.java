@@ -11,6 +11,7 @@ import java.util.Map;
 @Builder
 public class ModelRunDto {
     private Long id;
+    private Long artifactId;
     private String modelName;
     private String algorithm;
     private Map<String, Object> hyperparameters;

@@ -1,16 +1,17 @@
 package com.autoscientist.service;
 
 import com.autoscientist.entity.User;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -37,9 +38,38 @@ public class PasswordResetMailNotifier implements PasswordResetNotifier {
     @Value("${app.password-reset.outbox-dir:./data/mail-outbox}")
     private String outboxDir;
 
+    /**
+     * Logs whether a delivery transport is available without ever exposing SMTP
+     * hosts, usernames, passwords, or sender secrets. This makes a missing
+     * production SMTP configuration obvious in the startup logs.
+     */
+    @PostConstruct
+    void logDeliveryConfiguration() {
+        if (resolveValidatedBase() == null) {
+            log.warn("Password reset frontend URL is not an absolute http(s) URL with a valid host; "
+                    + "reset links will not be generated. Set FRONTEND_URL to the public frontend origin.");
+        }
+
+        boolean smtpConfigured = mailSenderProvider.getIfAvailable() != null;
+        if (smtpConfigured) {
+            log.info("Password reset email delivery is configured via SMTP.");
+        } else if (outboxEnabled) {
+            log.info("Password reset email delivery is configured via the local outbox (development only).");
+        } else {
+            log.warn("Password reset email delivery is NOT configured (no spring.mail.host and "
+                    + "PASSWORD_RESET_OUTBOX_ENABLED=false). Reset requests will return the generic "
+                    + "response but no email will be sent.");
+        }
+    }
+
     @Override
     public boolean send(User user, String rawToken, long ttlMinutes) {
-        String link = buildLink(rawToken);
+        String base = resolveValidatedBase();
+        if (base == null) {
+            log.error("Refusing to build a password reset link: FRONTEND_URL is not a valid absolute http(s) URL");
+            return false;
+        }
+        String link = buildLink(rawToken, base);
         String subject = "Reset your AutoScientist AI password";
         String body = buildBody(user, link, ttlMinutes);
 
@@ -53,8 +83,13 @@ public class PasswordResetMailNotifier implements PasswordResetNotifier {
             try {
                 mailSender.send(message);
                 return true;
-            } catch (MailException e) {
-                log.error("Password reset email delivery failed for user id {}", user.getId());
+            } catch (RuntimeException e) {
+                // Catch every runtime failure (MailException, misconfigured
+                // transport, provider timeouts) so a delivery problem can never
+                // turn the public reset endpoint into a 500 or leak whether the
+                // account exists. Only the exception type is logged.
+                log.error("Password reset email delivery failed for user id {} ({})",
+                        user.getId(), e.getClass().getSimpleName());
                 return false;
             }
         }
@@ -67,11 +102,31 @@ public class PasswordResetMailNotifier implements PasswordResetNotifier {
         return false;
     }
 
-    private String buildLink(String rawToken) {
+    /**
+     * Strictly validates FRONTEND_URL instead of relying on a prefix check.
+     * Prefix-only checks accept values such as {@code https:///evil} and
+     * {@code https://user:pass@host}, which can produce misleading reset links.
+     */
+    private String resolveValidatedBase() {
         String base = frontendUrl == null ? "" : frontendUrl.trim();
-        if (base.endsWith("/")) {
-            base = base.substring(0, base.length() - 1);
+        if (base.isEmpty() || !base.chars().allMatch(c -> c > 0x20 && c < 0x7f)) {
+            return null;
         }
+        try {
+            URI uri = URI.create(base);
+            String scheme = uri.getScheme();
+            boolean validScheme = "http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme);
+            if (!validScheme || uri.getHost() == null || uri.getHost().isBlank()
+                    || uri.getUserInfo() != null || uri.getFragment() != null) {
+                return null;
+            }
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        return base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+    }
+
+    private String buildLink(String rawToken, String base) {
         return base + "/reset-password?token=" + rawToken;
     }
 

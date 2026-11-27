@@ -1,0 +1,4 @@
+org.springframework.context.ApplicationContextInitializer=\
+com.autoscientist.config.MysqlConfigurationGuard,\
+com.autoscientist.config.JwtSecretGuard,\
+com.autoscientist.config.DevJwtSecretInitializer

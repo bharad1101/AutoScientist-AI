@@ -36,6 +36,8 @@ describe('Password reset pages', () => {
     });
     expect(screen.getByText(/check your inbox/i)).toBeInTheDocument();
     expect(screen.getByText(/if an account exists/i)).toBeInTheDocument();
+    expect(screen.getByText(/attempt to send password reset instructions/i)).toBeInTheDocument();
+    expect(screen.queryByText(/reset link has been sent/i)).not.toBeInTheDocument();
   });
 
   it('forgot password reports a backend connection failure', async () => {
@@ -51,6 +53,22 @@ describe('Password reset pages', () => {
     await waitFor(() => {
       expect(screen.getByText(/unable to connect to autoscientist server/i)).toBeInTheDocument();
     });
+  });
+
+  it('forgot password explains a cold-start 503 instead of blaming the backend', async () => {
+    authService.forgotPassword.mockRejectedValue({ response: { status: 503 } });
+
+    renderPage(<ForgotPasswordPage />, '/forgot-password');
+
+    fireEvent.change(screen.getByLabelText(/email address/i), {
+      target: { value: 'jane@university.edu' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send reset link/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/starting up or temporarily unavailable/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/verify the backend is running/i)).not.toBeInTheDocument();
   });
 
   it('reset password rejects mismatched passwords without calling the API', async () => {
@@ -113,6 +131,28 @@ describe('Password reset pages', () => {
     await waitFor(() => {
       expect(screen.getByText(/invalid or has expired/i)).toBeInTheDocument();
     });
+  });
+
+  it('reset password explains a request timeout without leaking internals', async () => {
+    authService.resetPassword.mockRejectedValue({
+      code: 'ECONNABORTED',
+      message: 'timeout of 45000ms exceeded',
+    });
+
+    renderPage(<ResetPasswordPage />, '/reset-password?token=valid-token');
+
+    fireEvent.change(screen.getByLabelText(/^new password$/i), {
+      target: { value: 'NewPassword123!' },
+    });
+    fireEvent.change(screen.getByLabelText(/confirm new password/i), {
+      target: { value: 'NewPassword123!' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /reset password/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/starting up or temporarily unavailable/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/timeout of 45000ms/i)).not.toBeInTheDocument();
   });
 
   it('reset password without a token shows an actionable incomplete-link state', () => {

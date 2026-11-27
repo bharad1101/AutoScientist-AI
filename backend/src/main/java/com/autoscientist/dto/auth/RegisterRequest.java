@@ -1,9 +1,10 @@
 package com.autoscientist.dto.auth;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
-import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -11,7 +12,6 @@ import lombok.NoArgsConstructor;
 @Data
 @Builder
 @NoArgsConstructor
-@AllArgsConstructor
 public class RegisterRequest {
 
     @NotBlank(message = "Name is required")
@@ -25,6 +25,16 @@ public class RegisterRequest {
     @NotBlank(message = "Password is required")
     @Size(min = 6, max = 100, message = "Password must be at least 6 characters")
     private String password;
+
+    @JsonCreator
+    public RegisterRequest(
+            @JsonProperty("name") String name,
+            @JsonProperty("email") String email,
+            @JsonProperty("password") String password) {
+        setName(name);
+        setEmail(email);
+        this.password = password;
+    }
 
     public void setEmail(String email) {
         this.email = email != null ? email.trim() : null;

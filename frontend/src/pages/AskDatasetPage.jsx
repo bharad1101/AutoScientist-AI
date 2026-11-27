@@ -5,6 +5,7 @@ import { datasetService } from '../services/datasetService';
 import { analysisService } from '../services/analysisService';
 import PrerequisiteAlert from '../components/PrerequisiteAlert';
 import { Bar, Line } from 'react-chartjs-2';
+import '../utils/chartSetup';
 
 export default function AskDatasetPage() {
   const { id } = useParams();
@@ -41,7 +42,7 @@ export default function AskDatasetPage() {
           selectDataset(targetId);
         }
       }
-    } catch (err) {
+    } catch {
       if (targetId) {
         try {
           const single = await datasetService.getDataset(targetId);
@@ -50,7 +51,10 @@ export default function AskDatasetPage() {
             setSelectedDatasetId(targetId);
             return;
           }
-        } catch (_) {}
+        } catch {
+          setError('Failed to load datasets.');
+          return;
+        }
       }
       setError('Failed to load datasets.');
     }

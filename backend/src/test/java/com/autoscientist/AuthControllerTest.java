@@ -7,15 +7,16 @@ import com.autoscientist.dto.auth.RegisterRequest;
 import com.autoscientist.dto.auth.UserDto;
 import com.autoscientist.security.AuthEntryPointJwt;
 import com.autoscientist.security.JwtUtils;
+import com.autoscientist.security.TokenRevocationService;
 import com.autoscientist.security.UserDetailsServiceImpl;
 import com.autoscientist.service.AuthService;
 import com.autoscientist.service.PasswordResetService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -38,19 +39,22 @@ class AuthControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @MockBean
+    @MockitoBean
     private AuthService authService;
 
-    @MockBean
+    @MockitoBean
     private PasswordResetService passwordResetService;
 
-    @MockBean
+    @MockitoBean
     private JwtUtils jwtUtils;
 
-    @MockBean
+    @MockitoBean
+    private TokenRevocationService tokenRevocationService;
+
+    @MockitoBean
     private UserDetailsServiceImpl userDetailsService;
 
-    @MockBean
+    @MockitoBean
     private AuthEntryPointJwt authEntryPointJwt;
 
     @Test

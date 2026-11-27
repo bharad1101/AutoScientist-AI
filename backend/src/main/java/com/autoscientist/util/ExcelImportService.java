@@ -1,16 +1,22 @@
 package com.autoscientist.util;
 
+import com.autoscientist.config.ResourceBudgetProperties;
 import com.autoscientist.exception.BadRequestException;
+import com.autoscientist.exception.ResourceLimitExceededException;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.usermodel.DateUtil;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.StringWriter;
+import java.io.Writer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
@@ -38,8 +44,23 @@ import java.util.Locale;
 public class ExcelImportService {
 
     public static final int MAX_PREVIEW_ROWS = 25;
-    /** Safety cap: a workbook beyond this many rows is refused instead of OOM-ing. */
-    public static final int MAX_SHEET_ROWS = 1_000_000;
+
+    /** Excel's own per-cell text ceiling; larger values can only be malicious. */
+    public static final int MAX_CELL_CHARS = 32_767;
+
+    private static final double MAX_INFLATE_RATIO = 0.02d;
+    private static final long MAX_WORKBOOK_FILES = 200;
+
+    private final ResourceBudgetProperties budget;
+
+    public ExcelImportService() {
+        this(new ResourceBudgetProperties());
+    }
+
+    @Autowired
+    public ExcelImportService(ResourceBudgetProperties budget) {
+        this.budget = budget;
+    }
 
     private static final DateTimeFormatter DATE_TIME_FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -81,12 +102,17 @@ public class ExcelImportService {
             List<SheetInfo> out = new ArrayList<>();
             for (int i = 0; i < wb.getNumberOfSheets(); i++) {
                 Sheet sheet = wb.getSheetAt(i);
-                out.add(new SheetInfo(i, sheet.getSheetName(),
-                        sheet.getLastRowNum() + 1, maxColumns(sheet)));
+                int rowCount = sheet.getLastRowNum() + 1;
+                if (rowCount > budget.getMaxRows()) {
+                    throw new ResourceLimitExceededException("Sheet '" + sheet.getSheetName()
+                            + "' has " + rowCount + " rows, which exceeds the configured limit of "
+                            + budget.getMaxRows() + ".");
+                }
+                out.add(new SheetInfo(i, sheet.getSheetName(), rowCount, boundedMaxColumns(sheet)));
             }
             return out;
         } catch (IOException e) {
-            throw new BadRequestException("Could not read workbook: " + e.getMessage());
+            throw new BadRequestException("Could not read workbook.");
         }
     }
 
@@ -125,7 +151,7 @@ public class ExcelImportService {
                 throw new BadRequestException("Sheet not found in workbook: "
                         + (sheetName != null ? sheetName : "#" + sheetIndex));
             }
-            int widthEarly = maxColumns(sheet);
+            int widthEarly = boundedMaxColumns(sheet);
             if (widthEarly == 0 || sheet.getLastRowNum() < 0) {
                 throw new BadRequestException("The selected sheet '"
                         + sheet.getSheetName() + "' is empty.");
@@ -137,7 +163,7 @@ public class ExcelImportService {
             }
 
             int headerIdx = headerRow - 1;
-            int width = maxColumns(sheet);
+            int width = widthEarly;
             if (width == 0) {
                 throw new BadRequestException("The selected sheet is empty.");
             }
@@ -152,20 +178,23 @@ public class ExcelImportService {
             // Duplicate header names break downstream look-ups; disambiguate deterministically.
             List<String> uniqueHeaders = dedupe(headers);
 
-            StringWriter writer = new StringWriter();
+            BoundedCsvWriter writer = new BoundedCsvWriter(
+                    (long) budget.getMaxMb() * 1024L * 1024L, budget.getMaxCells());
             int printed = 0;
             try (CSVPrinter printer = new CSVPrinter(writer, CSVFormat.DEFAULT)) {
+                writer.record(uniqueHeaders.size());
                 printer.printRecord(uniqueHeaders);
 
                 int lastRowIdx = sheet.getLastRowNum();
-                if (lastRowIdx - headerIdx > MAX_SHEET_ROWS) {
-                    throw new BadRequestException("Sheet exceeds the maximum of "
-                            + MAX_SHEET_ROWS + " rows.");
+                if (lastRowIdx - headerIdx > budget.getMaxRows()) {
+                    throw new ResourceLimitExceededException("Sheet exceeds the configured maximum of "
+                            + budget.getMaxRows() + " rows.");
                 }
                 for (int r = headerIdx + 1; r <= lastRowIdx; r++) {
                     Row row = sheet.getRow(r);
                     List<String> cells = readRow(row, width, wb.getCreationHelper());
                     if (isBlankRow(cells)) continue; // skip spacer rows entirely
+                    writer.record(cells.size());
                     printer.printRecord(cells);
                     printed++;
                 }
@@ -177,7 +206,7 @@ public class ExcelImportService {
             return new ConversionResult(writer.toString(), sheet.getSheetName(), headerRow,
                     printed, uniqueHeaders.size());
         } catch (IOException e) {
-            throw new BadRequestException("Could not convert sheet to CSV: " + e.getMessage());
+            throw new BadRequestException("Could not convert sheet to CSV.");
         }
     }
 
@@ -235,19 +264,86 @@ public class ExcelImportService {
             throw new BadRequestException(
                     "Unsupported file type. Upload a .csv, .xls or .xlsx file.");
         }
+        applyDecompressionLimits();
+        Path temp = null;
         try {
-            // WorkbookFactory auto-detects OLE2 (.xls) vs OOXML (.xlsx).
-            Workbook wb = WorkbookFactory.create(file.getInputStream());
+            temp = Files.createTempFile("autoscientist-upload-", tempSuffix(file.getOriginalFilename()));
+            try (InputStream in = file.getInputStream();
+                 java.io.OutputStream out = Files.newOutputStream(temp)) {
+                in.transferTo(out);
+            }
+            // Opening from a File, not an InputStream, makes POI apply its
+            // ZipSecureFile decompression limits. WorkbookFactory still detects
+            // OLE2 (.xls) vs OOXML (.xlsx) from the file contents.
+            Workbook wb = WorkbookFactory.create(temp.toFile());
             if (wb.getNumberOfSheets() == 0) {
                 wb.close();
                 throw new BadRequestException("The workbook contains no sheets.");
             }
+            if (wb.getNumberOfSheets() > budget.getMaxSheets()) {
+                wb.close();
+                throw new ResourceLimitExceededException("Workbook has " + wb.getNumberOfSheets()
+                        + " sheets, which exceeds the configured limit of " + budget.getMaxSheets() + ".");
+            }
             return wb;
-        } catch (BadRequestException e) {
+        } catch (BadRequestException | ResourceLimitExceededException e) {
+            throw e;
+        } catch (IOException e) {
+            if (isDecompressionLimitFailure(e)) {
+                throw decompressionLimitError();
+            }
             throw e;
         } catch (RuntimeException e) {
-            throw new BadRequestException("Unreadable or corrupt workbook: " + e.getMessage());
+            if (isDecompressionLimitFailure(e)) {
+                throw decompressionLimitError();
+            }
+            throw new BadRequestException("Unreadable or corrupt workbook.");
+        } finally {
+            if (temp != null) {
+                try {
+                    Files.deleteIfExists(temp);
+                } catch (IOException cleanupFailure) {
+                    temp.toFile().deleteOnExit();
+                }
+            }
         }
+    }
+
+    private String tempSuffix(String filename) {
+        return filename.toLowerCase(Locale.ROOT).endsWith(".xls") ? ".xls" : ".xlsx";
+    }
+
+    private void applyDecompressionLimits() {
+        long maxBytes = (long) budget.getMaxMb() * 1024L * 1024L;
+        ZipSecureFile.setMinInflateRatio(MAX_INFLATE_RATIO);
+        ZipSecureFile.setMaxEntrySize(Math.max(16L * 1024 * 1024, maxBytes * 2));
+        ZipSecureFile.setMaxFileCount(MAX_WORKBOOK_FILES);
+        ZipSecureFile.setMaxTextSize(Math.max(4L * 1024 * 1024, maxBytes));
+    }
+
+    private ResourceLimitExceededException decompressionLimitError() {
+        return new ResourceLimitExceededException(
+                "Workbook exceeds the configured decompression limits.");
+    }
+
+    public static boolean isDecompressionLimitFailure(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null) {
+                String lower = message.toLowerCase(Locale.ROOT);
+                if (lower.contains("zip bomb")
+                        || lower.contains("potentially malicious")
+                        || lower.contains("inflate ratio")
+                        || lower.contains("max entry size")
+                        || lower.contains("max file count")
+                        || lower.contains("max text size")) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private Sheet resolveSheet(Workbook wb, String sheetName, int sheetIndex) {
@@ -260,11 +356,16 @@ public class ExcelImportService {
         return wb.getSheetAt(sheetIndex);
     }
 
-    private int maxColumns(Sheet sheet) {
+    private int boundedMaxColumns(Sheet sheet) {
         int max = 0;
         for (Row row : sheet) {
             if (row == null) continue;
             short last = row.getLastCellNum();
+            if (last > budget.getMaxColumns()) {
+                throw new ResourceLimitExceededException("Sheet '" + sheet.getSheetName()
+                        + "' has " + last + " columns, which exceeds the configured limit of "
+                        + budget.getMaxColumns() + ".");
+            }
             if (last > max) max = last;
         }
         return max;
@@ -288,7 +389,7 @@ public class ExcelImportService {
         }
         switch (type) {
             case STRING:
-                return cell.getStringCellValue();
+                return boundedCellText(cell.getStringCellValue());
             case BOOLEAN:
                 return String.valueOf(cell.getBooleanCellValue());
             case NUMERIC:
@@ -306,6 +407,14 @@ public class ExcelImportService {
             default:
                 return "";
         }
+    }
+
+    private String boundedCellText(String value) {
+        if (value != null && value.length() > MAX_CELL_CHARS) {
+            throw new ResourceLimitExceededException(
+                    "Workbook exceeds the configured per-cell text limit of " + MAX_CELL_CHARS + " characters.");
+        }
+        return value;
     }
 
     private String formatDate(java.util.Date date) {
@@ -337,6 +446,51 @@ public class ExcelImportService {
             out.add(candidate);
         }
         return out;
+    }
+
+    private static final class BoundedCsvWriter extends Writer {
+        private final long maxBytes;
+        private final long maxCells;
+        private final StringBuilder content = new StringBuilder();
+        private long bytes;
+        private long cells;
+
+        private BoundedCsvWriter(long maxBytes, long maxCells) {
+            this.maxBytes = maxBytes;
+            this.maxCells = maxCells;
+        }
+
+        private void record(int cellCount) {
+            cells += cellCount;
+            if (cells > maxCells) {
+                throw new ResourceLimitExceededException("Sheet exceeds the configured total cell limit of "
+                        + maxCells + ".");
+            }
+        }
+
+        @Override
+        public void write(char[] cbuf, int off, int len) {
+            String chunk = new String(cbuf, off, len);
+            bytes += chunk.getBytes(StandardCharsets.UTF_8).length;
+            if (bytes > maxBytes) {
+                throw new ResourceLimitExceededException("Converted sheet exceeds the configured output limit of "
+                        + (maxBytes / (1024L * 1024L)) + " MB.");
+            }
+            content.append(chunk);
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public String toString() {
+            return content.toString();
+        }
     }
 
     private String sanitize(String s) {

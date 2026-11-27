@@ -4,16 +4,27 @@
 # Keeps all automated unit/integration tests running against an isolated
 # in-memory H2 database with create-drop so tests never contaminate or depend
 # on local persistent development databases.
+#
+# Surefire also pins these values as system properties in pom.xml, which take
+# precedence over shell environment variables. Explicit command-line profile
+# arguments in MySQL/dev smoke tests still override them.
 # ==============================================================================
+server:
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+
 spring:
   profiles:
-    active: ${SPRING_PROFILES_ACTIVE:dev}
+    active: test
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:autoscientist_test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL}
+    url: jdbc:h2:mem:autoscientist_test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL
     driver-class-name: org.h2.Driver
     username: sa
     password:
   jpa:
+    open-in-view: false
     hibernate:
       ddl-auto: create-drop
     database-platform: org.hibernate.dialect.H2Dialect
@@ -22,8 +33,9 @@ spring:
     enabled: false
 
 app:
+  environment: local
   jwt:
-    secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+    secret: S5qiJ4a27lu9rDlGsR3djA0puc7IXcCaVB5fWX3wPvYkeWnh52Qt3nR5JAGsXt7UeNFIxs+dMqtu7ofZxHNM8Q==
     expiration-ms: 3600000
   upload:
     dir: ./target/test-uploads

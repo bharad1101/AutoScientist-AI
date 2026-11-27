@@ -14,6 +14,7 @@ import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
@@ -21,6 +22,7 @@ import org.springframework.web.multipart.support.MissingServletRequestPartExcept
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -39,20 +41,23 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ApiResponse<Void>> handleNotFound(ResourceNotFoundException ex) {
+        log.debug("Resource not found: {}", SafeErrorMessages.forLog(ex.getMessage()));
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(ApiResponse.error(ex.getMessage()));
+                .body(ApiResponse.error(SafeErrorMessages.forClient(ex.getMessage())));
     }
 
     @ExceptionHandler(BadRequestException.class)
     public ResponseEntity<ApiResponse<Void>> handleBadRequest(BadRequestException ex) {
+        log.debug("Bad request rejected: {}", SafeErrorMessages.forLog(ex.getMessage()));
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(ApiResponse.error(ex.getMessage()));
+                .body(ApiResponse.error(SafeErrorMessages.forClient(ex.getMessage())));
     }
 
     @ExceptionHandler(UnauthorizedException.class)
     public ResponseEntity<ApiResponse<Void>> handleUnauthorized(UnauthorizedException ex) {
+        log.debug("Authorization rejected: {}", SafeErrorMessages.forLog(ex.getMessage()));
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                .body(ApiResponse.error(ex.getMessage()));
+                .body(ApiResponse.error(SafeErrorMessages.forClient(ex.getMessage())));
     }
 
     @ExceptionHandler(AccessDeniedException.class)
@@ -114,16 +119,31 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error("Request body is missing or malformed."));
     }
 
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        log.debug("Rejected request due to type mismatch on parameter: {}", ex.getName());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("The request contains a parameter with an invalid format."));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException ex) {
+        log.warn("Rejected request due to illegal argument: {}", SafeErrorMessages.forLog(ex.getMessage()));
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(ApiResponse.error(ex.getMessage()));
+                .body(ApiResponse.error("The request could not be processed."));
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ApiResponse<Void>> handleMaxUpload(MaxUploadSizeExceededException ex) {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
                 .body(ApiResponse.error("Uploaded file exceeds the allowed size limit."));
+    }
+
+    @ExceptionHandler(ResourceLimitExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleResourceLimit(ResourceLimitExceededException ex) {
+        log.debug("Resource limit rejected: {}", SafeErrorMessages.forLog(ex.getMessage()));
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(ApiResponse.error(SafeErrorMessages.forClient(ex.getMessage())));
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
@@ -146,7 +166,10 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGenericException(Exception ex) {
-        log.error("Unhandled server error: {}", ex.getMessage(), ex);
+        log.error("Unhandled server error ({}): {} | stack={}",
+                ex.getClass().getName(),
+                SafeErrorMessages.forLog(ex.getMessage()),
+                Arrays.toString(ex.getStackTrace()));
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.error("An internal server error occurred."));
     }

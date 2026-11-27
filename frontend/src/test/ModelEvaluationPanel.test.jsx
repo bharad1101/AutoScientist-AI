@@ -43,6 +43,11 @@ describe('ModelEvaluationPanel', () => {
   it('renders classification evaluation with confusion matrix, per-class table, ROC/PR curves, calibration, and CV', () => {
     const classificationEval = {
       status: 'AVAILABLE',
+      binaryClassification: true,
+      positiveClassIndex: 1,
+      positiveClassLabel: 'Class_1',
+      probabilityStatus: 'AVAILABLE',
+      decisionThreshold: 0.5,
       auc: 0.942,
       averagePrecision: 0.915,
       macroF1: 0.887,
@@ -116,6 +121,8 @@ describe('ModelEvaluationPanel', () => {
 
     // Calibration
     expect(screen.getByText(/Brier score: 0.082/i)).toBeInTheDocument();
+    expect(screen.getByText(/Decision threshold: 0\.5/i)).toBeInTheDocument();
+    expect(screen.getByText(/Observed rate for Class_1/i)).toBeInTheDocument();
 
     // Cross validation
     expect(screen.getByText('0.8750')).toBeInTheDocument();
@@ -151,6 +158,45 @@ describe('ModelEvaluationPanel', () => {
       screen.getByText(/ROC\/PR curves unavailable: the selected algorithm does not expose continuous scores/i)
     ).toBeInTheDocument();
     expect(screen.getByText(/Sample size below k-fold threshold/i)).toBeInTheDocument();
+  });
+
+  it('hides binary probability diagnostics for multiclass evaluations', () => {
+    const multiclassEval = {
+      status: 'AVAILABLE',
+      binaryClassification: false,
+      positiveClassIndex: null,
+      positiveClassLabel: null,
+      probabilityStatus: 'NOT_BINARY',
+      auc: 0.842,
+      averagePrecision: 0.711,
+      confusionMatrix: {
+        rows: [
+          [10, 1, 0],
+          [2, 12, 1],
+          [0, 1, 9],
+        ],
+        rowLabels: ['A', 'B', 'C'],
+        columnLabels: ['A', 'B', 'C'],
+      },
+      calibration: {
+        brierScore: 0.12,
+        bins: [{ meanPredicted: 0.5, observedFrequency: 0.5 }],
+      },
+    };
+
+    render(
+      <ModelEvaluationPanel
+        evaluation={multiclassEval}
+        problemType="CLASSIFICATION"
+        modelName="MulticlassModel"
+      />
+    );
+
+    expect(
+      screen.getByText(/Binary probability diagnostics are unavailable for multiclass classification/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/AUC: 0\.842/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Probability Calibration/i)).not.toBeInTheDocument();
   });
 
   it('renders regression diagnostics with residual stats, scatter, and cross validation', () => {

@@ -134,7 +134,7 @@ public class EdaEngine {
             return new CorrelationMatrix(variables, matrix);
         }
 
-        Map<String, List<String>> colData = parseColumns(inputStream, variables);
+        Map<String, double[]> colData = parseNumericColumns(inputStream, variables);
         double[][] pValues = new double[k][k];
         int[] sampleSizes = new int[k];
 
@@ -142,13 +142,13 @@ public class EdaEngine {
             matrix[i][i] = 1.0;
             pValues[i][i] = 0.0;
             String varI = variables.get(i);
-            List<String> rawI = colData.get(varI);
+            double[] valsI = colData.get(varI);
 
             for (int j = i + 1; j < k; j++) {
                 String varJ = variables.get(j);
-                List<String> rawJ = colData.get(varJ);
+                double[] valsJ = colData.get(varJ);
 
-                StatisticalTestEngine.TestResult res = statEngine.computePearsonCorrelation(varI, varJ, rawI, rawJ);
+                StatisticalTestEngine.TestResult res = statEngine.computePearsonCorrelation(varI, varJ, valsI, valsJ);
                 matrix[i][j] = res.getStatistic();
                 matrix[j][i] = res.getStatistic();
                 pValues[i][j] = res.getPValue();
@@ -828,5 +828,64 @@ public class EdaEngine {
         }
 
         return result;
+    }
+
+    private Map<String, double[]> parseNumericColumns(InputStream inputStream, List<String> targetColumns) throws Exception {
+        Map<String, NumericColumnBuffer> buffers = new HashMap<>();
+        targetColumns.forEach(c -> buffers.put(c, new NumericColumnBuffer()));
+
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
+             CSVParser parser = CSVFormat.DEFAULT.builder()
+                     .setHeader()
+                     .setSkipHeaderRecord(true)
+                     .setIgnoreHeaderCase(false)
+                     .setTrim(true)
+                     .build()
+                     .parse(reader)) {
+
+            for (CSVRecord record : parser) {
+                for (String col : targetColumns) {
+                    String value = record.isMapped(col) ? record.get(col) : "";
+                    buffers.get(col).add(value);
+                }
+            }
+        }
+
+        Map<String, double[]> result = new HashMap<>();
+        for (String col : targetColumns) {
+            result.put(col, buffers.get(col).toArray());
+        }
+        return result;
+    }
+
+    private static final class NumericColumnBuffer {
+        private double[] values = new double[1024];
+        private int size = 0;
+
+        private void add(String raw) {
+            if (size == values.length) {
+                values = Arrays.copyOf(values, values.length * 2);
+            }
+            values[size++] = parseNumber(raw);
+        }
+
+        private double[] toArray() {
+            return Arrays.copyOf(values, size);
+        }
+
+        private static double parseNumber(String raw) {
+            if (raw == null) return Double.NaN;
+            String value = raw.trim();
+            if (value.isEmpty() || value.equalsIgnoreCase("na") || value.equalsIgnoreCase("nan")
+                    || value.equalsIgnoreCase("null")) {
+                return Double.NaN;
+            }
+            try {
+                double parsed = Double.parseDouble(value);
+                return Double.isFinite(parsed) ? parsed : Double.NaN;
+            } catch (NumberFormatException ex) {
+                return Double.NaN;
+            }
+        }
     }
 }

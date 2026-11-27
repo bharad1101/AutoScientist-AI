@@ -7,10 +7,13 @@ import com.autoscientist.dto.auth.RegisterRequest;
 import com.autoscientist.dto.auth.ResetPasswordRequest;
 import com.autoscientist.dto.auth.UserDto;
 import com.autoscientist.dto.common.ApiResponse;
+import com.autoscientist.security.JwtUtils;
+import com.autoscientist.security.TokenRevocationService;
 import com.autoscientist.service.AuthService;
 import com.autoscientist.service.PasswordResetService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -24,6 +27,8 @@ public class AuthController {
 
     private final AuthService authService;
     private final PasswordResetService passwordResetService;
+    private final JwtUtils jwtUtils;
+    private final TokenRevocationService tokenRevocationService;
 
     @PostMapping("/register")
     public ResponseEntity<ApiResponse<AuthResponse>> register(@Valid @RequestBody RegisterRequest request) {
@@ -42,7 +47,7 @@ public class AuthController {
     public ResponseEntity<ApiResponse<Void>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
         passwordResetService.requestReset(request.getEmail());
         return ResponseEntity.ok(ApiResponse.success(
-                "If an account exists for that email, a password reset link has been sent.", null));
+                "If an account exists for that email, we'll attempt to send password reset instructions.", null));
     }
 
     @PostMapping("/reset-password")
@@ -63,7 +68,20 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<ApiResponse<Void>> logout() {
+    public ResponseEntity<ApiResponse<Void>> logout(
+            @AuthenticationPrincipal UserDetails userDetails,
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+        if (userDetails == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(ApiResponse.error("Unauthorized"));
+        }
+        if (authorization != null && authorization.startsWith("Bearer ")) {
+            String token = authorization.substring(7).trim();
+            if (!token.isEmpty() && jwtUtils.validateJwtToken(token)
+                    && userDetails.getUsername().equals(jwtUtils.getUserNameFromJwtToken(token))) {
+                tokenRevocationService.revoke(token, jwtUtils.getExpirationEpochMillis(token));
+            }
+        }
         return ResponseEntity.ok(ApiResponse.success("Logout successful", null));
     }
 }

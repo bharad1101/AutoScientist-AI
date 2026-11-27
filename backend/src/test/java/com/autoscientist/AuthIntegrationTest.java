@@ -8,7 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -19,7 +19,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "spring.datasource.url=jdbc:h2:mem:auth_integration_test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL",
+        "spring.jpa.hibernate.ddl-auto=create-drop"
+})
 @AutoConfigureMockMvc
 public class AuthIntegrationTest {
 
@@ -160,21 +163,6 @@ public class AuthIntegrationTest {
     }
 
     @Test
-    @DisplayName("7. Dev profile seeded demo account logs in successfully")
-    void testDevProfileSeededUserLogin() throws Exception {
-        // jane@university.edu is initialized by DataInitializer in dev profile
-        LoginRequest loginReq = new LoginRequest("jane@university.edu", "SecurePassword123!");
-
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(loginReq)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.token").isNotEmpty())
-                .andExpect(jsonPath("$.data.user.email").value("jane@university.edu"));
-    }
-
-    @Test
     @DisplayName("8. Duplicate registration is rejected with 400 Bad Request")
     void testDuplicateRegistrationFails() throws Exception {
         RegisterRequest req1 = new RegisterRequest("User One", "duplicate@science.org", "pass12345");
@@ -190,6 +178,23 @@ public class AuthIntegrationTest {
                         .content(objectMapper.writeValueAsString(req2)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.success").value(false));
+    }
+
+    @Test
+    @DisplayName("8b. Duplicate registration does not echo the submitted email or reveal account existence")
+    void duplicateRegistrationResponseDoesNotLeakTheEmail() throws Exception {
+        RegisterRequest first = new RegisterRequest("Account One", "no.leak@example.org", "pass12345");
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(first)))
+                .andExpect(status().isCreated());
+
+        RegisterRequest duplicate = new RegisterRequest("Account Two", "NO.LEAK@EXAMPLE.ORG", "pass12345");
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(duplicate)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Registration could not be completed. Please check your details or sign in."));
     }
 
     @Test

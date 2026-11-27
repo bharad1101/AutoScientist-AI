@@ -4,61 +4,56 @@ import com.autoscientist.entity.DataQualityIssue;
 import com.autoscientist.entity.DataQualityReport;
 import com.autoscientist.entity.Dataset;
 import com.autoscientist.entity.DatasetColumn;
-import org.apache.commons.csv.CSVFormat;
-import org.apache.commons.csv.CSVParser;
-import org.apache.commons.csv.CSVRecord;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.io.BufferedReader;
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
+import com.autoscientist.util.CsvTable;
+
+/**
+ * Engine that evaluates data quality for a dataset.
+ * Includes core checks and delegates additional column consistency validation.
+ */
 @Component
 public class DataQualityEngine {
 
+    private final ColumnConsistencyValidator consistencyValidator;
+
+    // No‑arg constructor for legacy tests
+    public DataQualityEngine() {
+        this.consistencyValidator = new ColumnConsistencyValidator();
+    }
+
+    // Primary constructor for production use
+    @Autowired
+    public DataQualityEngine(ColumnConsistencyValidator consistencyValidator) {
+        this.consistencyValidator = consistencyValidator;
+    }
+
     public DataQualityReport evaluate(InputStream inputStream, Dataset dataset, List<DatasetColumn> columns) throws Exception {
-        List<List<String>> rows = new ArrayList<>();
-        List<String> headers;
+        return evaluate(CsvTable.read(inputStream), dataset, columns);
+    }
 
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
-             CSVParser parser = CSVFormat.DEFAULT.builder()
-                     .setHeader()
-                     .setSkipHeaderRecord(true)
-                     .setIgnoreHeaderCase(false)
-                     .setTrim(true)
-                     .build()
-                     .parse(reader)) {
-
-            headers = new ArrayList<>(parser.getHeaderNames());
-            for (CSVRecord record : parser) {
-                List<String> rowValues = new ArrayList<>();
-                for (int i = 0; i < headers.size(); i++) {
-                    rowValues.add(record.get(i));
-                }
-                rows.add(rowValues);
-            }
-        }
-
-        int totalRows = rows.size();
+    public DataQualityReport evaluate(CsvTable table, Dataset dataset, List<DatasetColumn> columns) throws Exception {
         List<DataQualityIssue> issues = new ArrayList<>();
+        int totalRows = table.getRowCount();
 
         DataQualityReport report = DataQualityReport.builder()
                 .dataset(dataset)
                 .issues(issues)
                 .build();
 
-        // 1. Check duplicate rows
-        Set<String> uniqueRowHashes = new HashSet<>();
-        int duplicateRowCount = 0;
-        for (List<String> row : rows) {
-            String hash = String.join("|||", row);
-            if (!uniqueRowHashes.add(hash)) {
-                duplicateRowCount++;
-            }
-        }
-
+        // 1. Duplicate rows
+        int duplicateRowCount = table.getDuplicateRowCount();
         double duplicateScore = totalRows > 0 ? Math.max(0.0, 100.0 - ((double) duplicateRowCount / totalRows * 100.0)) : 100.0;
         if (duplicateRowCount > 0) {
             issues.add(DataQualityIssue.builder()
@@ -72,7 +67,7 @@ public class DataQualityEngine {
                     .build());
         }
 
-        // 2. Column-level quality audits
+        // 2. Column‑level audits
         double totalMissingPctSum = 0;
         int outlierCountSum = 0;
         int inconsistentCategoriesCount = 0;
@@ -101,7 +96,7 @@ public class DataQualityEngine {
                         .recommendation("Use robust imputation (median for numeric, mode for categorical) or missingness indicators.")
                         .affectedRows(col.getMissingCount())
                         .build());
-            } else if (col.getMissingCount() > 0) {
+            } else if (col.getMissingCount() != null && col.getMissingCount() > 0) {
                 issues.add(DataQualityIssue.builder()
                         .report(report)
                         .columnName(col.getColumnName())
@@ -113,8 +108,8 @@ public class DataQualityEngine {
                         .build());
             }
 
-            // Zero variance check
-            if (col.getUniqueCount() <= 1 && totalRows > 1) {
+            // Zero variance
+            if (col.getUniqueCount() != null && col.getUniqueCount() <= 1 && totalRows > 1) {
                 issues.add(DataQualityIssue.builder()
                         .report(report)
                         .columnName(col.getColumnName())
@@ -126,8 +121,9 @@ public class DataQualityEngine {
                         .build());
             }
 
-            // Unique Identifier check
-            if (col.getUniqueCount() == totalRows && totalRows > 10 && (col.getDataType().equals("TEXT") || col.getDataType().equals("NUMERIC"))) {
+            // Unique identifier
+            if (col.getUniqueCount() != null && col.getUniqueCount() == totalRows && totalRows > 10 &&
+                    ("TEXT".equals(col.getDataType()) || "NUMERIC".equals(col.getDataType()))) {
                 issues.add(DataQualityIssue.builder()
                         .report(report)
                         .columnName(col.getColumnName())
@@ -139,24 +135,20 @@ public class DataQualityEngine {
                         .build());
             }
 
-            // Outlier detection for numeric columns using IQR rule
-            if (col.getDataType().equals("NUMERIC") && col.getQ1() != null && col.getQ3() != null) {
+            // Outlier detection (IQR)
+            if ("NUMERIC".equals(col.getDataType()) && col.getQ1() != null && col.getQ3() != null) {
                 double iqr = col.getQ3() - col.getQ1();
                 if (iqr > 0) {
-                    double lowerBound = col.getQ1() - 1.5 * iqr;
-                    double upperBound = col.getQ3() + 1.5 * iqr;
-
+                    double lower = col.getQ1() - 1.5 * iqr;
+                    double upper = col.getQ3() + 1.5 * iqr;
                     int colIndex = col.getColumnIndex();
                     int outliers = 0;
-                    for (List<String> row : rows) {
+                    for (String raw : table.getColumn(colIndex)) {
                         try {
-                            double val = Double.parseDouble(row.get(colIndex));
-                            if (val < lowerBound || val > upperBound) {
-                                outliers++;
-                            }
+                            double v = Double.parseDouble(raw);
+                            if (v < lower || v > upper) outliers++;
                         } catch (Exception ignored) {}
                     }
-
                     if (outliers > 0) {
                         outlierCountSum += outliers;
                         issues.add(DataQualityIssue.builder()
@@ -172,30 +164,27 @@ public class DataQualityEngine {
                 }
             }
 
-            // Inconsistent casing check for categorical columns
-            if (col.getDataType().equals("CATEGORICAL")) {
+            // Inconsistent casing for categorical columns
+            if ("CATEGORICAL".equals(col.getDataType())) {
                 int colIndex = col.getColumnIndex();
-                Map<String, Set<String>> lowerToOriginals = new HashMap<>();
-                for (List<String> row : rows) {
-                    String val = row.get(colIndex);
+                java.util.Map<String, java.util.Set<String>> lowerToOriginals = new java.util.HashMap<>();
+                for (String val : table.getColumn(colIndex)) {
                     if (val != null && !val.trim().isEmpty()) {
                         String lower = val.trim().toLowerCase();
-                        lowerToOriginals.computeIfAbsent(lower, k -> new HashSet<>()).add(val.trim());
+                        lowerToOriginals.computeIfAbsent(lower, k -> new java.util.HashSet<>()).add(val.trim());
                     }
                 }
-
-                for (Map.Entry<String, Set<String>> entry : lowerToOriginals.entrySet()) {
-                    if (entry.getValue().size() > 1) {
+                for (java.util.Map.Entry<String, java.util.Set<String>> e : lowerToOriginals.entrySet()) {
+                    if (e.getValue().size() > 1) {
                         inconsistentCategoriesCount++;
                         issues.add(DataQualityIssue.builder()
                                 .report(report)
                                 .columnName(col.getColumnName())
                                 .issueType("INCONSISTENT_CASING")
                                 .severity("WARNING")
-                                .description(String.format("Column '%s' contains casing inconsistencies for value '%s': %s.",
-                                        col.getColumnName(), entry.getKey(), entry.getValue()))
+                                .description(String.format("Column '%s' contains casing inconsistencies for value '%s': %s.", col.getColumnName(), e.getKey(), e.getValue()))
                                 .recommendation("Standardize category strings (e.g. normalize to lowercase/uppercase).")
-                                .affectedRows(entry.getValue().size())
+                                .affectedRows(e.getValue().size())
                                 .build());
                         break;
                     }
@@ -203,27 +192,216 @@ public class DataQualityEngine {
             }
         }
 
-        // Compute scores
+        // 3. Explicit value-level checks: invalid data types, inconsistent formats,
+        //    and cross-column redundancy. These are additive and never drop rows.
+        int invalidValueCount = 0;
+        int formatIssueCount = 0;
+        for (DatasetColumn col : columns) {
+            int colIndex = col.getColumnIndex();
+            if (colIndex < 0 || colIndex >= table.getColumnCount()) {
+                continue;
+            }
+            List<String> values = table.getColumn(colIndex);
+            if ("NUMERIC".equals(col.getDataType())) {
+                int invalid = 0;
+                int commaDecimals = 0;
+                int dotDecimals = 0;
+                for (String raw : values) {
+                    if (isMissingToken(raw)) {
+                        continue;
+                    }
+                    String value = raw.trim();
+                    if (value.matches(".*\\d,\\d.*")) commaDecimals++;
+                    if (value.matches(".*\\d\\.\\d.*")) dotDecimals++;
+                    try {
+                        Double.parseDouble(value.replace(",", "."));
+                    } catch (NumberFormatException e) {
+                        invalid++;
+                    }
+                }
+                if (invalid > 0) {
+                    invalidValueCount += invalid;
+                    issues.add(DataQualityIssue.builder()
+                            .report(report)
+                            .columnName(col.getColumnName())
+                            .issueType("INVALID_DATA_TYPE")
+                            .severity("WARNING")
+                            .description(String.format(
+                                    "Column '%s' is profiled as numeric but contains %d non-numeric value(s).",
+                                    col.getColumnName(), invalid))
+                            .recommendation("Correct or remove malformed values; mixed types break numeric analysis.")
+                            .affectedRows(invalid)
+                            .build());
+                }
+                if (commaDecimals > 0 && dotDecimals > 0) {
+                    formatIssueCount++;
+                    issues.add(DataQualityIssue.builder()
+                            .report(report)
+                            .columnName(col.getColumnName())
+                            .issueType("INCONSISTENT_NUMERIC_FORMAT")
+                            .severity("WARNING")
+                            .description(String.format(
+                                    "Column '%s' mixes comma and dot decimal separators.",
+                                    col.getColumnName()))
+                            .recommendation("Standardize on one decimal separator before analysis.")
+                            .affectedRows(commaDecimals + dotDecimals)
+                            .build());
+                }
+            } else if ("DATE_TIME".equals(col.getDataType())) {
+                int invalidDates = 0;
+                for (String raw : values) {
+                    if (isMissingToken(raw)) {
+                        continue;
+                    }
+                    if (!looksLikeDate(raw.trim())) {
+                        invalidDates++;
+                    }
+                }
+                if (invalidDates > 0) {
+                    invalidValueCount += invalidDates;
+                    formatIssueCount++;
+                    issues.add(DataQualityIssue.builder()
+                            .report(report)
+                            .columnName(col.getColumnName())
+                            .issueType("INCONSISTENT_DATE_FORMAT")
+                            .severity("WARNING")
+                            .description(String.format(
+                                    "Column '%s' is profiled as a date/time but contains %d value(s) "
+                                            + "in an unrecognised format.",
+                                    col.getColumnName(), invalidDates))
+                            .recommendation("Normalize dates to a single ISO-8601 format.")
+                            .affectedRows(invalidDates)
+                            .build());
+                }
+            }
+        }
+
+        // Cross-column redundancy: identical value vectors are a consistency risk
+        // (double counting, accidental duplication of a predictor).
+        int duplicateColumnCount = detectDuplicateColumns(table, columns, report);
+
+        // Apply additional column consistency validator
+        if (consistencyValidator != null) {
+            columns.forEach(col -> consistencyValidator.validate(col, report));
+        }
+
+        // Score calculations (explainable, each component 0–100)
         int numCols = columns.isEmpty() ? 1 : columns.size();
         double avgMissingPct = totalMissingPctSum / numCols;
         double missingValueScore = Math.max(0.0, 100.0 - avgMissingPct * 1.5);
-
         double outlierFraction = totalRows > 0 ? (double) outlierCountSum / (totalRows * numCols) : 0.0;
         double outlierScore = Math.max(0.0, 100.0 - (outlierFraction * 100.0 * 2.0));
+        double invalidFraction = totalRows > 0 ? (double) invalidValueCount / (totalRows * numCols) : 0.0;
+        double consistencyScore = Math.max(0.0, 100.0
+                - (inconsistentCategoriesCount * 15.0)
+                - (formatIssueCount * 10.0)
+                - (duplicateColumnCount * 10.0)
+                - (invalidFraction * 100.0));
 
-        double consistencyScore = Math.max(0.0, 100.0 - (inconsistentCategoriesCount * 15.0));
-
-        // Overall weighted score
         double overallScore = (missingValueScore * 0.40) + (duplicateScore * 0.25) +
                 (outlierScore * 0.15) + (consistencyScore * 0.20);
 
-        report.setOverallScore(Math.round(overallScore * 10.0) / 10.0);
-        report.setMissingValueScore(Math.round(missingValueScore * 10.0) / 10.0);
-        report.setDuplicateScore(Math.round(duplicateScore * 10.0) / 10.0);
-        report.setOutlierScore(Math.round(outlierScore * 10.0) / 10.0);
-        report.setConsistencyScore(Math.round(consistencyScore * 10.0) / 10.0);
+        // Set score fields on report
+        report.setOverallScore(overallScore);
+        report.setMissingValueScore(missingValueScore);
+        report.setDuplicateScore(duplicateScore);
+        report.setOutlierScore(outlierScore);
+        report.setConsistencyScore(consistencyScore);
         report.setTotalIssues(issues.size());
-
         return report;
+    }
+
+    private static final List<DateTimeFormatter> DATE_FORMATS = Arrays.asList(
+            DateTimeFormatter.ISO_LOCAL_DATE,
+            DateTimeFormatter.ISO_LOCAL_DATE_TIME,
+            DateTimeFormatter.ofPattern("yyyy/MM/dd"),
+            DateTimeFormatter.ofPattern("MM/dd/yyyy"),
+            DateTimeFormatter.ofPattern("dd-MM-yyyy"),
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"),
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+            DateTimeFormatter.ofPattern("MM/dd/yyyy HH:mm"),
+            DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"));
+
+    private static boolean isMissingToken(String raw) {
+        if (raw == null) {
+            return true;
+        }
+        String value = raw.trim().toLowerCase(java.util.Locale.ROOT);
+        return value.isEmpty()
+                || value.equals("na")
+                || value.equals("n/a")
+                || value.equals("null")
+                || value.equals("nan")
+                || value.equals("none");
+    }
+
+    private static boolean looksLikeDate(String value) {
+        if (value == null || value.length() < 8) {
+            return false;
+        }
+        for (DateTimeFormatter format : DATE_FORMATS) {
+            try {
+                LocalDate.parse(value, format);
+                return true;
+            } catch (Exception ignored) {
+            }
+            try {
+                LocalDateTime.parse(value, format);
+                return true;
+            } catch (Exception ignored) {
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Flags columns whose value vectors are identical. Returns the number of
+     * duplicate columns found so the consistency score can account for them.
+     */
+    private int detectDuplicateColumns(CsvTable table, List<DatasetColumn> columns, DataQualityReport report) {
+        Map<String, Integer> firstIndexBySignature = new HashMap<>();
+        int duplicates = 0;
+        for (DatasetColumn col : columns) {
+            int colIndex = col.getColumnIndex();
+            if (colIndex < 0 || colIndex >= table.getColumnCount()) {
+                continue;
+            }
+            List<String> values = table.getColumn(colIndex);
+            if (values.isEmpty()) {
+                continue;
+            }
+            boolean hasValue = false;
+            for (String value : values) {
+                if (!isMissingToken(value)) {
+                    hasValue = true;
+                    break;
+                }
+            }
+            if (!hasValue) {
+                continue;
+            }
+            String signature = values.size() + ":" + values.hashCode();
+            Integer first = firstIndexBySignature.get(signature);
+            if (first == null) {
+                firstIndexBySignature.put(signature, colIndex);
+                continue;
+            }
+            if (table.getColumn(first).equals(values)) {
+                duplicates++;
+                report.getIssues().add(DataQualityIssue.builder()
+                        .report(report)
+                        .columnName(col.getColumnName())
+                        .issueType("DUPLICATE_COLUMN")
+                        .severity("INFO")
+                        .description(String.format(
+                                "Column '%s' is identical to an earlier column; redundant predictors "
+                                        + "can inflate feature importance and distort tests.",
+                                col.getColumnName()))
+                        .recommendation("Drop one of the identical columns from modelling.")
+                        .affectedRows(values.size())
+                        .build());
+            }
+        }
+        return duplicates;
     }
 }

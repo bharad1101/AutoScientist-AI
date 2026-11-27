@@ -3,17 +3,20 @@ package com.autoscientist.service;
 import com.autoscientist.analysis.core.AnalysisOperations;
 import com.autoscientist.analysis.profiling.DatasetProfiler;
 import com.autoscientist.analysis.quality.DataQualityEngine;
+import com.autoscientist.config.ResourceBudgetProperties;
 import com.autoscientist.dto.dataset.*;
 import com.autoscientist.entity.DataQualityReport;
 import com.autoscientist.entity.Dataset;
 import com.autoscientist.entity.DatasetColumn;
 import com.autoscientist.entity.User;
 import com.autoscientist.exception.BadRequestException;
+import com.autoscientist.exception.ResourceLimitExceededException;
 import com.autoscientist.exception.ResourceNotFoundException;
+import com.autoscientist.exception.SafeErrorMessages;
 import com.autoscientist.exception.UnauthorizedException;
 import com.autoscientist.repository.*;
-import com.autoscientist.util.CsvValidator;
 import com.autoscientist.util.ColumnSelection;
+import com.autoscientist.util.CsvTable;
 import com.autoscientist.util.ExcelImportService;
 import com.autoscientist.util.FileStorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -50,8 +53,12 @@ public class DatasetService {
     private final ExperimentRepository experimentRepository;
     private final ExperimentVersionRepository experimentVersionRepository;
     private final ModelRunRepository modelRunRepository;
+    private final com.autoscientist.repository.ModelArtifactRepository modelArtifactRepository;
+    private final com.autoscientist.repository.JobInfoRepository jobInfoRepository;
     private final AnalysisRunRepository analysisRunRepository;
+    private final ResourceBudgetProperties resourceBudget;
     private final com.autoscientist.repository.DriftSnapshotRepository driftSnapshotRepository;
+    private final jakarta.persistence.EntityManager entityManager;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Transactional
@@ -60,6 +67,12 @@ public class DatasetService {
                                           User owner) {
         if (file == null || file.isEmpty()) {
             throw new BadRequestException("Uploaded file cannot be empty.");
+        }
+        long maxBytes = (long) resourceBudget.getMaxMb() * 1024L * 1024L;
+        if (file.getSize() > maxBytes) {
+            throw new ResourceLimitExceededException(String.format(
+                    "Uploaded file is %d bytes, which exceeds the configured limit of %d MB.",
+                    file.getSize(), resourceBudget.getMaxMb()));
         }
         String originalFilename = file.getOriginalFilename();
         if (!com.autoscientist.util.ExcelImportService.isSupportedFilename(originalFilename)) {
@@ -118,14 +131,23 @@ public class DatasetService {
             try {
                 analysisBytes = file.getBytes();
             } catch (Exception e) {
-                throw new BadRequestException("Could not read the uploaded file: " + e.getMessage());
+                log.warn("Could not read uploaded file: {}", SafeErrorMessages.forLog(e.getMessage()));
+                throw new BadRequestException("Could not read the uploaded file.");
             }
-            // Structural validation (works on CSV bytes; Excel path is validated by conversion).
-            try (InputStream testIn = new ByteArrayInputStream(analysisBytes)) {
-                CsvValidator.validateCsv(testIn);
-            } catch (Exception e) {
-                throw new BadRequestException("CSV validation failed: " + e.getMessage());
-            }
+        }
+
+        // Parse and validate once; profiling and the quality audit reuse this table.
+        CsvTable table;
+        try (InputStream in = new ByteArrayInputStream(analysisBytes)) {
+            table = CsvTable.read(in, resourceBudget.getMaxRows(), resourceBudget.getMaxColumns(),
+                    resourceBudget.getMaxCells());
+        } catch (BadRequestException | ResourceLimitExceededException e) {
+            if (sourceStoredFilename != null) fileStorageService.deleteFile(sourceStoredFilename);
+            throw e;
+        } catch (Exception e) {
+            log.warn("CSV validation failed: {}", SafeErrorMessages.forLog(e.getMessage()));
+            if (sourceStoredFilename != null) fileStorageService.deleteFile(sourceStoredFilename);
+            throw new BadRequestException("CSV validation failed. Check the file format and try again.");
         }
 
         String storedFilename = fileStorageService.storeBytes(
@@ -158,16 +180,17 @@ public class DatasetService {
                 ? new java.util.HashSet<>(opts.getForceNonIdentifier()) : java.util.Collections.emptySet();
 
         // Run Profiler
-        try (InputStream in = new ByteArrayInputStream(analysisBytes)) {
-            DatasetProfiler.ProfilingResult profResult = datasetProfiler.profile(in, dataset, forceId, forceNonId);
+        try {
+            DatasetProfiler.ProfilingResult profResult = datasetProfiler.profile(table, dataset, forceId, forceNonId);
             dataset.setRowCount(profResult.getRowCount());
             dataset.setColumnCount(profResult.getColumnCount());
             dataset.setDatasetType(profResult.getDatasetType());
             dataset.setColumns(profResult.getColumns());
         } catch (Exception e) {
+            log.warn("Profiling failed: {}", SafeErrorMessages.forLog(e.getMessage()));
             fileStorageService.deleteFile(storedFilename);
             if (sourceStoredFilename != null) fileStorageService.deleteFile(sourceStoredFilename);
-            throw new BadRequestException("Profiling failed: " + e.getMessage());
+            throw new BadRequestException("Profiling failed. Check the dataset contents and try again.");
         }
 
         // Validate wizard-requested exclusions against the real column list.
@@ -188,13 +211,14 @@ public class DatasetService {
 
         // Run Quality Engine
         DataQualityReport qualityReport;
-        try (InputStream in = new ByteArrayInputStream(analysisBytes)) {
-            qualityReport = dataQualityEngine.evaluate(in, dataset, dataset.getColumns());
+        try {
+            qualityReport = dataQualityEngine.evaluate(table, dataset, dataset.getColumns());
             dataset.setQualityReport(qualityReport);
         } catch (Exception e) {
+            log.warn("Data quality audit failed: {}", SafeErrorMessages.forLog(e.getMessage()));
             fileStorageService.deleteFile(storedFilename);
             if (sourceStoredFilename != null) fileStorageService.deleteFile(sourceStoredFilename);
-            throw new BadRequestException("Data quality audit failed: " + e.getMessage());
+            throw new BadRequestException("Data quality audit failed. Check the dataset contents and try again.");
         }
 
         dataset = datasetRepository.save(dataset);
@@ -239,8 +263,11 @@ public class DatasetService {
                 ? new HashSet<>(request.getForceNonIdentifier()) : Collections.emptySet();
 
         long started = System.currentTimeMillis();
+        CsvTable table;
         try (InputStream in = fileStorageService.getInputStream(dataset.getStoredFilename())) {
-            DatasetProfiler.ProfilingResult result = datasetProfiler.profile(in, dataset, forceId, forceNonId);
+            table = CsvTable.read(in, resourceBudget.getMaxRows(), resourceBudget.getMaxColumns(),
+                    resourceBudget.getMaxCells());
+            DatasetProfiler.ProfilingResult result = datasetProfiler.profile(table, dataset, forceId, forceNonId);
             dataset.setRowCount(result.getRowCount());
             dataset.setColumnCount(result.getColumnCount());
             dataset.setDatasetType(result.getDatasetType());
@@ -257,12 +284,13 @@ public class DatasetService {
                 }
             }
         } catch (Exception e) {
-            throw new BadRequestException("Re-profiling failed: " + e.getMessage());
+            log.warn("Re-profiling failed: {}", SafeErrorMessages.forLog(e.getMessage()));
+            throw new BadRequestException("Re-profiling failed. Check the dataset contents and try again.");
         }
 
         // Quality issues depend on the profile, so refresh the audit as well.
-        try (InputStream in = fileStorageService.getInputStream(dataset.getStoredFilename())) {
-            DataQualityReport fresh = dataQualityEngine.evaluate(in, dataset, dataset.getColumns());
+        try {
+            DataQualityReport fresh = dataQualityEngine.evaluate(table, dataset, dataset.getColumns());
             DataQualityReport existing = dataset.getQualityReport();
             if (existing == null) {
                 dataset.setQualityReport(fresh);
@@ -375,6 +403,8 @@ public class DatasetService {
         Dataset dataset = getDatasetEntityWithOwnership(id, owner);
         String storedFilename = dataset.getStoredFilename();
 
+        jobInfoRepository.deleteAll(jobInfoRepository.findByDatasetIdAndOwner(dataset.getId(), owner));
+
         List<com.autoscientist.entity.ResearchQuestion> questions =
                 researchQuestionRepository.findByDatasetOrderByCreatedAtDesc(dataset);
         reportRepository.deleteAll(reportRepository.findByDatasetOrderByCreatedAtDesc(dataset));
@@ -386,20 +416,26 @@ public class DatasetService {
             }
         }
         researchQuestionRepository.deleteAll(questions);
+        entityManager.flush();
 
         for (com.autoscientist.entity.Experiment e : experimentRepository.findByDatasetOrderByCreatedAtDesc(dataset)) {
             if (e.getVersions() != null) {
                 for (com.autoscientist.entity.ExperimentVersion v : e.getVersions()) {
+                    modelArtifactRepository.deleteAll(modelArtifactRepository.findByExperimentVersion(v));
                     modelRunRepository.deleteAll(modelRunRepository.findByExperimentVersion(v));
                 }
+                entityManager.flush();
                 experimentVersionRepository.deleteAll(e.getVersions());
+                entityManager.flush();
             }
         }
         experimentRepository.deleteAll(experimentRepository.findByDatasetOrderByCreatedAtDesc(dataset));
+        entityManager.flush();
 
         analysisRunRepository.deleteByDatasetId(dataset.getId());
         driftSnapshotRepository.deleteAll(driftSnapshotRepository.findByDatasetOrderByCreatedAtDesc(dataset));
         associationRepository.deleteByDataset(dataset);
+        entityManager.flush();
 
         datasetRepository.delete(dataset);
         fileStorageService.deleteFile(storedFilename);

@@ -161,4 +161,38 @@ describe('EdaGallery', () => {
       expect(screen.getByRole('heading', { name: /Missing-Value Matrix/i })).toBeInTheDocument();
     });
   });
+
+  it('falls back to the first available result when the selected variable is no longer available', async () => {
+    analysisService.getHistograms.mockResolvedValue({
+      data: [{ variable: 'bmi', binStarts: [18, 25], binEnds: [25, 32], counts: [7, 9] }],
+    });
+    analysisService.getCategoricalSummaries.mockResolvedValue({
+      data: [{ variable: 'gender', topCategories: [{ category: 'Other', count: 12 }] }],
+    });
+
+    render(<EdaGallery datasetId={1} columns={sampleColumns} />);
+
+    await waitFor(() => {
+      expect(analysisService.getHistograms).toHaveBeenCalledWith(1);
+      expect(screen.getAllByTestId('mock-bar-chart').length).toBeGreaterThan(0);
+    });
+
+    const histogramChart = screen.getAllByTestId('mock-bar-chart')[0];
+    expect(histogramChart).toHaveAttribute('data-labels', JSON.stringify(['18–25', '25–32']));
+    expect(screen.queryByText(/No numeric variables are available for distribution analysis/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No categorical variables are available for composition analysis/i)).not.toBeInTheDocument();
+  });
+
+  it('renders a clear empty state instead of an empty chart when no results exist', async () => {
+    analysisService.getHistograms.mockResolvedValue({ data: [] });
+    analysisService.getCategoricalSummaries.mockResolvedValue({ data: [] });
+
+    render(<EdaGallery datasetId={1} columns={sampleColumns} />);
+
+    await waitFor(() => {
+      expect(analysisService.getHistograms).toHaveBeenCalledWith(1);
+      expect(screen.getByText(/No numeric variables are available for distribution analysis/i)).toBeInTheDocument();
+      expect(screen.getByText(/No categorical variables are available for composition analysis/i)).toBeInTheDocument();
+    });
+  });
 });

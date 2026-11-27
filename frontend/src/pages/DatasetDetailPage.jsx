@@ -271,7 +271,9 @@ const DatasetDetailPage = () => {
                   let categories = {};
                   try {
                     if (col.categoriesJson) categories = JSON.parse(col.categoriesJson);
-                  } catch (e) {}
+                  } catch {
+                    categories = {};
+                  }
 
                   return (
                     <tr key={col.id || idx}>

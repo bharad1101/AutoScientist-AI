@@ -3,10 +3,16 @@
 --
 -- This file is the human-readable REFERENCE schema, kept in sync with the JPA
 -- entities in backend/src/main/java/com/autoscientist/entity/.
--- The authoritative, versioned migration path is Flyway:
---   backend/src/main/resources/db/migration/V1__baseline.sql       (full baseline)
---   backend/src/main/resources/db/migration/V2__provenance_delta.sql (additive delta)
--- See docs/DEPLOYMENT.md §3.1.
+-- The authoritative, versioned migration path is Flyway (V1-V7) under
+-- backend/src/main/resources/db/migration/:
+--   V1__baseline.sql                       (full baseline, fresh installs)
+--   V2__provenance_delta.sql               (additive legacy delta)
+--   V3__association_confidence_intervals.sql
+--   V4__password_reset_tokens.sql
+--   V5__jobs_and_model_artifacts.sql
+--   V6__model_artifact_longblob.sql
+--   V7__job_ownership_and_parameters.sql   (legacy jobs table)
+-- See docs/DEPLOYMENT.md §3.1. This reference file is not a migration.
 
 CREATE DATABASE IF NOT EXISTS autoscientist_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE autoscientist_db;
@@ -131,7 +137,7 @@ CREATE TABLE IF NOT EXISTS associations (
     CONSTRAINT fk_associations_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
--- 7. Research Questions
+-- 7. Research Questions Table
 CREATE TABLE IF NOT EXISTS research_questions (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     dataset_id BIGINT NOT NULL,
@@ -141,13 +147,13 @@ CREATE TABLE IF NOT EXISTS research_questions (
     predictor_variable VARCHAR(255) NULL,
     question_type VARCHAR(50) NOT NULL,
     suggested_test VARCHAR(100) NULL,
-    status VARCHAR(50) DEFAULT 'ACTIVE',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(50) NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_rq_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
     CONSTRAINT fk_rq_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
--- 8. Hypotheses
+-- 8. Hypotheses Table
 CREATE TABLE IF NOT EXISTS hypotheses (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     research_question_id BIGINT NOT NULL,
@@ -157,13 +163,13 @@ CREATE TABLE IF NOT EXISTS hypotheses (
     suggested_test VARCHAR(100) NOT NULL,
     var1 VARCHAR(255) NOT NULL,
     var2 VARCHAR(255) NULL,
-    confidence DOUBLE DEFAULT 0.95,
-    rank_order INT DEFAULT 1,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    confidence DOUBLE NOT NULL DEFAULT 0.95,
+    rank_order INT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_hypotheses_rq FOREIGN KEY (research_question_id) REFERENCES research_questions(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
--- 9. Statistical Tests
+-- 9. Statistical Tests Table
 CREATE TABLE IF NOT EXISTS statistical_tests (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     hypothesis_id BIGINT NOT NULL,
@@ -173,46 +179,47 @@ CREATE TABLE IF NOT EXISTS statistical_tests (
     var2 VARCHAR(255) NULL,
     statistic DOUBLE NOT NULL,
     p_value DOUBLE NOT NULL,
-    alpha DOUBLE DEFAULT 0.05,
+    effect_size DOUBLE NULL,
+    effect_size_type VARCHAR(50) NULL,
     degrees_of_freedom DOUBLE NULL,
-    effect_size DOUBLE NOT NULL,
-    effect_size_type VARCHAR(50) NOT NULL,
-    sample_size INT NOT NULL,
-    is_statistically_significant BOOLEAN NOT NULL DEFAULT FALSE,
-    status VARCHAR(50) NOT NULL,
-    interpretation LONGTEXT NOT NULL,
+    sample_size INT NULL,
+    alpha DOUBLE NULL,
+    ci_level DOUBLE NULL,
     ci_lower DOUBLE NULL,
     ci_upper DOUBLE NULL,
-    ci_level DOUBLE NULL,
     ci_method VARCHAR(120) NULL,
     ci_target VARCHAR(160) NULL,
     ci_unavailable_reason VARCHAR(400) NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_stat_tests_hypo FOREIGN KEY (hypothesis_id) REFERENCES hypotheses(id) ON DELETE CASCADE,
+    interpretation TEXT NULL,
+    is_statistically_significant BOOLEAN NOT NULL DEFAULT FALSE,
+    status VARCHAR(50) NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_stat_tests_hypothesis FOREIGN KEY (hypothesis_id) REFERENCES hypotheses(id) ON DELETE CASCADE,
     CONSTRAINT fk_stat_tests_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
--- 10. Experiments
+-- 10. Experiments Table
 CREATE TABLE IF NOT EXISTS experiments (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     dataset_id BIGINT NOT NULL,
     user_id BIGINT NOT NULL,
     research_question_id BIGINT NULL,
     name VARCHAR(255) NOT NULL,
-    description TEXT,
+    description TEXT NULL,
     target_column VARCHAR(255) NOT NULL,
-    problem_type VARCHAR(50) NOT NULL, -- REGRESSION, CLASSIFICATION, CLUSTERING
-    status VARCHAR(50) DEFAULT 'COMPLETED',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    problem_type VARCHAR(50) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'COMPLETED',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_experiments_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
-    CONSTRAINT fk_experiments_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    CONSTRAINT fk_experiments_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_experiments_rq FOREIGN KEY (research_question_id) REFERENCES research_questions(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
--- 11. Experiment Versions
+-- 11. Experiment Versions Table
 CREATE TABLE IF NOT EXISTS experiment_versions (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     experiment_id BIGINT NOT NULL,
-    version_number INT NOT NULL DEFAULT 1,
+    version_number INT NOT NULL,
     preprocessing_json LONGTEXT NULL,
     feature_selection_json LONGTEXT NULL,
     models_summary_json LONGTEXT NULL,
@@ -221,33 +228,44 @@ CREATE TABLE IF NOT EXISTS experiment_versions (
     dataset_version INT NULL,
     random_seed BIGINT NULL,
     engine_version VARCHAR(64) NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_exp_versions_exp FOREIGN KEY (experiment_id) REFERENCES experiments(id) ON DELETE CASCADE
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_experiment_versions_experiment FOREIGN KEY (experiment_id) REFERENCES experiments(id) ON DELETE CASCADE,
+    CONSTRAINT uk_experiment_version UNIQUE (experiment_id, version_number)
 ) ENGINE=InnoDB;
 
--- 12. ML Models
+-- 12. Models Table (ML model artifacts and metadata)
 CREATE TABLE IF NOT EXISTS models (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     experiment_version_id BIGINT NOT NULL,
-    model_name VARCHAR(100) NOT NULL,
-    algorithm VARCHAR(100) NOT NULL,
-    hyperparameters_json LONGTEXT NULL,
+    model_name VARCHAR(255) NOT NULL,
+    algorithm VARCHAR(255) NULL,
+    is_best_model BOOLEAN NOT NULL DEFAULT FALSE,
+    random_seed BIGINT NULL,
+    evaluation_json LONGTEXT NULL,
+    test_metrics_json LONGTEXT NULL,
     train_metrics_json LONGTEXT NULL,
     val_metrics_json LONGTEXT NULL,
-    test_metrics_json LONGTEXT NULL,
-    is_best_model BOOLEAN DEFAULT FALSE,
     fairness_metrics_json LONGTEXT NULL,
     feature_importances_json LONGTEXT NULL,
-    evaluation_json LONGTEXT NULL,
-    random_seed BIGINT NULL,
+    hyperparameters_json LONGTEXT NULL,
+    test_rows INT NULL,
     train_rows INT NULL,
     val_rows INT NULL,
-    test_rows INT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_models_version FOREIGN KEY (experiment_version_id) REFERENCES experiment_versions(id) ON DELETE CASCADE
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_models_experiment_version FOREIGN KEY (experiment_version_id) REFERENCES experiment_versions(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
--- 13. Findings
+-- 13. Model Artifacts Table (stores trained model binaries)
+CREATE TABLE IF NOT EXISTS model_artifacts (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    experiment_version_id BIGINT NOT NULL,
+    model_name VARCHAR(255) NOT NULL,
+    payload LONGBLOB NOT NULL,
+    CONSTRAINT fk_model_artifact_experiment FOREIGN KEY (experiment_version_id) REFERENCES experiment_versions(id)
+) ENGINE=InnoDB;
+
+-- 14. Findings Table
 CREATE TABLE IF NOT EXISTS findings (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     dataset_id BIGINT NOT NULL,
@@ -260,38 +278,42 @@ CREATE TABLE IF NOT EXISTS findings (
     evidence_text LONGTEXT NOT NULL,
     confidence_level VARCHAR(50) NOT NULL,
     causality_disclaimer LONGTEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_findings_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_findings_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
+    CONSTRAINT fk_findings_rq FOREIGN KEY (research_question_id) REFERENCES research_questions(id) ON DELETE SET NULL,
+    CONSTRAINT fk_findings_hypothesis FOREIGN KEY (hypothesis_id) REFERENCES hypotheses(id) ON DELETE SET NULL,
+    CONSTRAINT fk_findings_test FOREIGN KEY (statistical_test_id) REFERENCES statistical_tests(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
--- 14. Evidence Nodes (Provenance Graph)
+-- 15. Evidence Nodes Table (graph nodes for findings)
 CREATE TABLE IF NOT EXISTS evidence_nodes (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     finding_id BIGINT NOT NULL,
-    node_type VARCHAR(100) NOT NULL, -- DATASET, STAT_TEST, ML_MODEL, FEATURE
+    node_type VARCHAR(100) NOT NULL,
     reference_id BIGINT NULL,
     description TEXT NOT NULL,
     data_payload_json LONGTEXT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_evidence_finding FOREIGN KEY (finding_id) REFERENCES findings(id) ON DELETE CASCADE
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_evidence_nodes_finding FOREIGN KEY (finding_id) REFERENCES findings(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
--- 15. Scientific Reports
+-- 16. Reports Table
 CREATE TABLE IF NOT EXISTS reports (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     dataset_id BIGINT NOT NULL,
     user_id BIGINT NOT NULL,
     research_question_id BIGINT NULL,
     title VARCHAR(255) NOT NULL,
-    summary TEXT,
-    markdown_content LONGTEXT NOT NULL,
+    summary TEXT NULL,
+    markdown_content LONGTEXT NULL,
     pdf_filename VARCHAR(255) NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_reports_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
-    CONSTRAINT fk_reports_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    CONSTRAINT fk_reports_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_reports_rq FOREIGN KEY (research_question_id) REFERENCES research_questions(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
--- 16. Analysis Runs (provenance of every analysis operation actually executed)
+-- 17. Analysis Runs Table (provenance of analysis operations)
 CREATE TABLE IF NOT EXISTS analysis_runs (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     dataset_id BIGINT NOT NULL,
@@ -310,7 +332,7 @@ CREATE TABLE IF NOT EXISTS analysis_runs (
     CONSTRAINT uk_analysis_run_key UNIQUE (dataset_id, operation, params_hash)
 ) ENGINE=InnoDB;
 
--- 17. Drift Snapshots (persisted drift-comparison evidence)
+-- 18. Drift Snapshots Table (persisted drift comparison results)
 CREATE TABLE IF NOT EXISTS drift_snapshots (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     dataset_id BIGINT NOT NULL,
@@ -319,19 +341,37 @@ CREATE TABLE IF NOT EXISTS drift_snapshots (
     overall_status VARCHAR(32) NULL,
     overall_drift_index DOUBLE NULL,
     report_json LONGTEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_drift_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_drift_snapshots_dataset FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
     INDEX idx_drift_snapshot_dataset (dataset_id, created_at)
 ) ENGINE=InnoDB;
 
--- 18. Password Reset Tokens (single-use, hashed tokens)
+-- 19. Password Reset Tokens Table
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id BIGINT NOT NULL,
     token_hash VARCHAR(64) NOT NULL,
     expires_at TIMESTAMP NOT NULL,
     used_at TIMESTAMP NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
     CONSTRAINT uk_password_reset_token_hash UNIQUE (token_hash),
     CONSTRAINT fk_password_reset_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- 20. Jobs Table (single definition)
+CREATE TABLE IF NOT EXISTS jobs (
+    id CHAR(36) PRIMARY KEY,
+    type VARCHAR(255) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    progress INT NOT NULL,
+    error_message TEXT,
+    created_at TIMESTAMP NOT NULL,
+    started_at TIMESTAMP NULL,
+    completed_at TIMESTAMP NULL,
+    transient_file_path VARCHAR(255),
+    owner_id BIGINT NULL,
+    dataset_id BIGINT NULL,
+    target_column VARCHAR(255) NULL,
+    problem_type VARCHAR(50) NULL,
+    CONSTRAINT fk_jobs_owner FOREIGN KEY (owner_id) REFERENCES users(id)
 ) ENGINE=InnoDB;

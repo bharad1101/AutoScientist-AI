@@ -24,5 +24,13 @@ data/
 # macOS Finder bookmark/alias accidentally created at the repo root
 /AutoScientist AI
 
+# Private keys and credential files
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
 # Logs
 *.log

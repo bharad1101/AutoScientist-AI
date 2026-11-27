@@ -5,9 +5,20 @@ import { validateProductionApiBaseUrl } from './config/apiBaseUrl.js';
 export default defineConfig(({ command, mode }) => {
   const fileEnv = loadEnv(mode, process.cwd(), '');
   const apiBaseUrl = process.env.VITE_API_BASE_URL ?? fileEnv.VITE_API_BASE_URL;
+  const proxyMode = (process.env.VITE_API_PROXY_MODE ?? fileEnv.VITE_API_PROXY_MODE ?? '')
+    .trim()
+    .toLowerCase();
 
   if (command === 'build') {
-    validateProductionApiBaseUrl(apiBaseUrl);
+    if (proxyMode && proxyMode !== 'same-origin') {
+      throw new Error(
+        `Production build refused: VITE_API_PROXY_MODE must be "same-origin" or unset, received "${proxyMode}".`
+      );
+    }
+    const normalizedApiBaseUrl = validateProductionApiBaseUrl(apiBaseUrl, {
+      allowSameOrigin: proxyMode === 'same-origin',
+    });
+    process.env.VITE_API_BASE_URL = normalizedApiBaseUrl;
   }
 
   return {
@@ -28,21 +39,7 @@ export default defineConfig(({ command, mode }) => {
       setupFiles: './src/test/setup.js',
     },
     build: {
-      rollupOptions: {
-        output: {
-          manualChunks(id) {
-            if (id.includes('node_modules')) {
-              if (id.includes('chart.js') || id.includes('react-chartjs-2')) {
-                return 'vendor-charts';
-              }
-              if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom')) {
-                return 'vendor-react';
-              }
-              return 'vendor';
-            }
-          },
-        },
-      },
+      // manual chunks intentionally left to Rolldown's shared-chunk analysis
       chunkSizeWarningLimit: 600,
     },
   };

@@ -26,10 +26,10 @@ describe('API client (actual service) — base URL resolution', () => {
   });
 
   it('uses VITE_API_BASE_URL when explicitly configured', async () => {
-    vi.stubEnv('VITE_API_BASE_URL', 'https://autoscientist-ai-backend.onrender.com/api');
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.example.com/api');
     vi.resetModules();
     const api = (await import('../services/api.js')).default;
-    expect(api.defaults?.baseURL).toBe('https://autoscientist-ai-backend.onrender.com/api');
+    expect(api.defaults?.baseURL).toBe('https://api.example.com/api');
     vi.unstubAllEnvs();
   });
 

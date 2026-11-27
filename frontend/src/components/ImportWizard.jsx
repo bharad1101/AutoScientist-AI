@@ -141,7 +141,7 @@ export default function ImportWizard({ onCancel, onImported }) {
       onImported?.(res?.data);
     } catch (err) {
       clearTimeout(safetyTimer);
-      const msg = err.response?.data?.message || err.message || 'Import failed.';
+      const msg = err.response?.data?.message || 'Import failed.';
       const isTimeout = err.code === 'ECONNABORTED' || msg.includes('timeout');
       setError(isTimeout
         ? 'The upload timed out. The file may be too large or the server is busy. Please try again.'
