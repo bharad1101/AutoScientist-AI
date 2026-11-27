@@ -8,7 +8,7 @@ export const WORKFLOW_STAGES = [
     stepNumber: 1,
     name: 'Upload Dataset',
     shortName: 'Upload',
-    getPath: (id) => `/datasets`,
+    getPath: () => `/datasets`,
     icon: 'bi-cloud-arrow-up',
     description: 'Ingest raw CSV dataset into AutoScientist AI',
   },
@@ -125,12 +125,7 @@ export const WORKFLOW_STAGES = [
 const WorkflowContext = createContext(null);
 
 export const WorkflowProvider = ({ children }) => {
-  let authContext = null;
-  try {
-    authContext = useAuth();
-  } catch (e) {
-    authContext = null;
-  }
+  const authContext = useAuth();
   const isAuthenticated = authContext ? authContext.isAuthenticated : false;
   const authLoading = authContext ? authContext.loading : false;
 

@@ -23,7 +23,7 @@ COPY --from=build /app/target/autoscientist-backend-1.0.0-SNAPSHOT.jar app.jar
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh \
-    && mkdir -p /app/uploads/datasets /app/data \
+    && mkdir -p /app/uploads/datasets/temp /app/data \
     && chown -R appuser:appuser /app/uploads /app/data
 
 ENV SPRING_PROFILES_ACTIVE=mysql

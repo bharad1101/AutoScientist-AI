@@ -2,7 +2,16 @@ target/
 data/
 uploads/
 .env
+.env.*
+!.env.example
 *.log
+.DS_Store
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
 .git/
 .idea/
 .vscode/

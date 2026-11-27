@@ -27,8 +27,20 @@ vi.mock('../services/analysisService', () => ({
 }));
 
 vi.mock('react-chartjs-2', () => ({
-  Bar: (props) => <div data-testid="mock-bar-chart" data-labels={JSON.stringify(props.data?.labels)} />,
-  Line: (props) => <div data-testid="mock-line-chart" data-labels={JSON.stringify(props.data?.labels)} />,
+  Bar: (props) => (
+    <div
+      data-testid="mock-bar-chart"
+      data-labels={JSON.stringify(props.data?.labels)}
+      data-series={JSON.stringify(props.data?.datasets?.map((d) => d.label))}
+    />
+  ),
+  Line: (props) => (
+    <div
+      data-testid="mock-line-chart"
+      data-labels={JSON.stringify(props.data?.labels)}
+      data-series={JSON.stringify(props.data?.datasets?.map((d) => d.label))}
+    />
+  ),
 }));
 
 describe('AutoML Benchmark Feature Response & Graph Selection', () => {
@@ -79,6 +91,11 @@ describe('AutoML Benchmark Feature Response & Graph Selection', () => {
     referenceValue: 180.0,
     referencePrediction: 0.42,
     referenceClass: 'No',
+    binaryClassification: true,
+    positiveClassIndex: 1,
+    positiveClassLabel: 'Yes',
+    probabilityStatus: 'AVAILABLE',
+    decisionThreshold: 0.5,
     supported: true,
     points: [
       { x: 120.0, prediction: 0.15, probability: 0.15 },
@@ -96,6 +113,11 @@ describe('AutoML Benchmark Feature Response & Graph Selection', () => {
     referenceValue: 50.0,
     referencePrediction: 0.42,
     referenceClass: 'No',
+    binaryClassification: true,
+    positiveClassIndex: 1,
+    positiveClassLabel: 'Yes',
+    probabilityStatus: 'AVAILABLE',
+    decisionThreshold: 0.5,
     supported: true,
     points: [
       { x: 20.0, prediction: 0.20, probability: 0.20 },
@@ -159,6 +181,7 @@ describe('AutoML Benchmark Feature Response & Graph Selection', () => {
     // Chart container is rendered
     expect(screen.getByTestId('benchmark-feature-chart-container')).toBeInTheDocument();
     expect(screen.getByTestId('mock-line-chart')).toBeInTheDocument();
+    expect(screen.getByTestId('mock-line-chart').getAttribute('data-series')).toContain('P(Yes)');
     expect(screen.getByText(/Marginal conditional response curve for cholesterol/i)).toBeInTheDocument();
   });
 
@@ -214,5 +237,64 @@ describe('AutoML Benchmark Feature Response & Graph Selection', () => {
         screen.getByText(/Feature 'cholesterol' has zero variance and cannot produce a response curve/i)
       ).toBeInTheDocument();
     });
+  });
+
+  it('does not label multiclass feature-effect output as a positive-class probability', async () => {
+    analysisService.getFeatureEffect.mockResolvedValue({
+      data: {
+        ...sampleNumericEffect,
+        binaryClassification: false,
+        positiveClassLabel: null,
+        probabilityStatus: 'NOT_BINARY',
+      },
+    });
+
+    renderComponent();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-line-chart')).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId('mock-line-chart').getAttribute('data-series')).not.toContain('P(Yes)');
+    expect(
+      screen.getByText(/Positive-class probabilities are not defined for multiclass classification/i)
+    ).toBeInTheDocument();
+  });
+
+  it('uses explicit class semantics in what-if results', async () => {
+    analysisService.simulateWhatIf.mockResolvedValue({
+      data: {
+        problemType: 'CLASSIFICATION',
+        predictedClass: 'No',
+        predictedClassIndex: 0,
+        referenceClass: 'No',
+        referencePrediction: 0,
+        positiveClassIndex: 1,
+        positiveClassLabel: 'Yes',
+        positiveClassProbability: 0.73,
+        probabilityStatus: 'AVAILABLE',
+        decisionThreshold: 0.5,
+        referenceDescription: 'Reference profile.',
+      },
+    });
+
+    renderComponent();
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Simulate Counterfactual Prediction/i })
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Simulate Counterfactual Prediction/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('whatif-class-semantics')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/P\(Yes\)/)).toBeInTheDocument();
+    expect(screen.getByText(/73\.0%/)).toBeInTheDocument();
+    expect(screen.getByText(/Decision threshold: 0\.5/i)).toBeInTheDocument();
+    expect(screen.getByText(/simulated class is not the positive class/i)).toBeInTheDocument();
   });
 });

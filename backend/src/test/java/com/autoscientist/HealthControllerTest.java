@@ -6,10 +6,12 @@ import com.autoscientist.security.UserDetailsServiceImpl;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -50,11 +52,18 @@ class HealthControllerTest {
     @Test
     @DisplayName("2b. GET /api/health/ready verifies the datasource without authentication")
     void readinessEndpointIsPublicAndChecksDatabase() throws Exception {
-        mockMvc.perform(get("/api/health/ready"))
+        MvcResult result = mockMvc.perform(get("/api/health/ready"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.status").value("UP"))
-                .andExpect(jsonPath("$.data.database").value("UP"));
+                .andExpect(jsonPath("$.data.database").value("UP"))
+                .andExpect(jsonPath("$.data.storage").value("UP"))
+                .andExpect(jsonPath("$.data.migrations").value("SKIPPED"))
+                .andExpect(jsonPath("$.data.storageBackend").doesNotExist())
+                .andReturn();
+
+        assertThat(result.getResponse().getContentAsString())
+                .doesNotContain(System.getProperty("user.dir"));
     }
 
     @Test

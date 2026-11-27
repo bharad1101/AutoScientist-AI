@@ -26,11 +26,12 @@ public class DeploymentProfileGuard implements ApplicationRunner {
         boolean testProfile = environment.acceptsProfiles(Profiles.of("test"));
 
         if (devProfile) {
-            if (isHostedRuntime()) {
+            if (isHostedRuntime() || !isExplicitLocalOptIn()) {
                 throw new IllegalStateException(
-                        "Refusing to start with the 'dev' profile on a hosted runtime. "
+                        "Refusing to start with the 'dev' profile outside an explicitly local environment. "
                                 + "The dev profile uses a local H2 database, so deployed accounts would differ from production. "
-                                + "Set SPRING_PROFILES_ACTIVE=mysql and provide SPRING_DATASOURCE_URL, "
+                                + "For local work set APP_ENVIRONMENT=local. For deployments set "
+                                + "SPRING_PROFILES_ACTIVE=mysql and provide SPRING_DATASOURCE_URL, "
                                 + "SPRING_DATASOURCE_USERNAME, SPRING_DATASOURCE_PASSWORD and JWT_SECRET."
                 );
             }
@@ -39,6 +40,14 @@ public class DeploymentProfileGuard implements ApplicationRunner {
         }
 
         if (testProfile) {
+            if (environment.acceptsProfiles(Profiles.of("mysql")) || isHostedRuntime() || !isExplicitLocalOptIn()) {
+                throw new IllegalStateException(
+                        "Refusing to start with the 'test' profile outside an explicitly local environment because "
+                                + "it disables the production deployment guard. For local tests set "
+                                + "APP_ENVIRONMENT=local. For deployments set SPRING_PROFILES_ACTIVE=mysql and "
+                                + "provide the production datasource and JWT configuration."
+                );
+            }
             return;
         }
 
@@ -59,6 +68,16 @@ public class DeploymentProfileGuard implements ApplicationRunner {
 
         log.info("Deployment guard: datasource is not embedded; active profile(s) {} accepted.",
                 Arrays.toString(environment.getActiveProfiles()));
+    }
+
+    private boolean isExplicitLocalOptIn() {
+        return "local".equalsIgnoreCase(property("APP_ENVIRONMENT").trim())
+                || "local".equalsIgnoreCase(property("app.environment").trim());
+    }
+
+    private String property(String key) {
+        String value = environment.getProperty(key);
+        return value == null ? "" : value;
     }
 
     private boolean isHostedRuntime() {

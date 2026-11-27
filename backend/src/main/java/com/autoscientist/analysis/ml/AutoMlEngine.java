@@ -4,10 +4,13 @@ import com.autoscientist.analysis.feature.FeatureEngineeringEngine.DatasetSplit;
 import org.apache.commons.math3.linear.*;
 import org.springframework.stereotype.Component;
 
+import java.io.Serializable;
 import java.util.*;
 
 @Component
-public class AutoMlEngine {
+public class AutoMlEngine implements Serializable {
+
+    private static final long serialVersionUID = 1L;
 
     /** Max number of curve points persisted per ROC/PR curve (keeps payloads bounded). */
     private static final int MAX_CURVE_POINTS = 100;
@@ -66,7 +69,7 @@ public class AutoMlEngine {
         public Map<String, Object> getEvaluation() { return evaluation; }
     }
 
-    public interface PredictiveModel {
+    public interface PredictiveModel extends Serializable {
         double predictSingle(double[] x);
         double[] predict(double[][] X);
         double[] getWeights(); // for linear models
@@ -425,6 +428,7 @@ public class AutoMlEngine {
                 double[] scores = new double[xTest.length];
                 for (int i = 0; i < xTest.length; i++) scores[i] = base.getTrainedModel().predictProba(xTest[i]);
                 evaluation.putAll(classificationEvaluation(preds, scores, yTest, split.getClassMap()));
+                evaluation.putAll(ClassificationSemantics.metadata(split.getProblemType(), split.getReverseClassMap()));
                 evaluation.put("classDistribution", classDistribution(split));
             } else {
                 double[] preds = base.getTrainedModel().predict(split.getXTest());
@@ -829,7 +833,8 @@ public class AutoMlEngine {
 
     // --- DECISION TREE DATA STRUCTURE & LOGIC ---
 
-    private static class DecisionTreeNode {
+    private static class DecisionTreeNode implements Serializable {
+        private static final long serialVersionUID = 1L;
         boolean isLeaf;
         double value;
         double prob; // classification leaves: share of positive rows in the node
@@ -853,47 +858,16 @@ public class AutoMlEngine {
             return node;
         }
 
-        int bestFeat = -1;
-        double bestThresh = 0;
-        double bestVarRed = -1;
-
-        int p = X[0].length;
         double currentVar = calcVariance(y);
-
-        for (int j = 0; j < p; j++) {
-            for (int i = 0; i < X.length; i++) {
-                double thresh = X[i][j];
-                List<Double> leftY = new ArrayList<>();
-                List<Double> rightY = new ArrayList<>();
-
-                for (int k = 0; k < X.length; k++) {
-                    if (X[k][j] <= thresh) leftY.add(y[k]);
-                    else rightY.add(y[k]);
-                }
-
-                if (leftY.size() < 1 || rightY.size() < 1) continue;
-
-                double varL = calcVarianceList(leftY);
-                double varR = calcVarianceList(rightY);
-                double weightedVar = ((double) leftY.size() / y.length * varL) + ((double) rightY.size() / y.length * varR);
-                double varRed = currentVar - weightedVar;
-
-                if (varRed > bestVarRed) {
-                    bestVarRed = varRed;
-                    bestFeat = j;
-                    bestThresh = thresh;
-                }
-            }
-        }
-
-        if (bestFeat == -1 || bestVarRed <= 0) {
+        SplitPoint best = findBestRegressionSplit(X, y, currentVar);
+        if (best.feature < 0 || best.gain <= 0) {
             node.isLeaf = true;
             node.value = mean;
             return node;
         }
 
-        node.featureIndex = bestFeat;
-        node.threshold = bestThresh;
+        node.featureIndex = best.feature;
+        node.threshold = best.threshold;
 
         List<double[]> leftX = new ArrayList<>();
         List<Double> leftY = new ArrayList<>();
@@ -901,7 +875,7 @@ public class AutoMlEngine {
         List<Double> rightY = new ArrayList<>();
 
         for (int i = 0; i < X.length; i++) {
-            if (X[i][bestFeat] <= bestThresh) {
+            if (X[i][best.feature] <= best.threshold) {
                 leftX.add(X[i]);
                 leftY.add(y[i]);
             } else {
@@ -913,6 +887,61 @@ public class AutoMlEngine {
         node.left = buildRegressionTree(leftX.toArray(new double[0][]), toArray(leftY), depth + 1, maxDepth);
         node.right = buildRegressionTree(rightX.toArray(new double[0][]), toArray(rightY), depth + 1, maxDepth);
         return node;
+    }
+
+    /**
+     * Finds the same best split as the original O(n^2) scan by sorting one feature
+     * at a time and using prefix sums/squared sums. Candidate thresholds are still
+     * the observed row values and ties are resolved in original row order.
+     */
+    private SplitPoint findBestRegressionSplit(double[][] X, double[] y, double currentVar) {
+        int n = X.length;
+        int p = X[0].length;
+        SplitPoint best = new SplitPoint(-1, 0, -1);
+        double totalSum = 0;
+        double totalSumSq = 0;
+        for (double v : y) {
+            totalSum += v;
+            totalSumSq += v * v;
+        }
+
+        for (int j = 0; j < p; j++) {
+            Integer[] order = sortedOrder(X, j);
+            double[] prefixSum = new double[n + 1];
+            double[] prefixSumSq = new double[n + 1];
+            for (int pos = 0; pos < n; pos++) {
+                double value = y[order[pos]];
+                prefixSum[pos + 1] = prefixSum[pos] + value;
+                prefixSumSq[pos + 1] = prefixSumSq[pos] + value * value;
+            }
+
+            Map<Double, Double> gainByThreshold = new HashMap<>();
+            int pos = 0;
+            while (pos < n) {
+                int end = groupEnd(X, order, j, pos);
+                if (end < n) {
+                    int leftN = end;
+                    int rightN = n - end;
+                    double sumL = prefixSum[end];
+                    double sumR = totalSum - sumL;
+                    double varL = leftN > 1
+                            ? (prefixSumSq[end] - sumL * sumL / leftN) / (leftN - 1) : 0.0;
+                    double varR = rightN > 1
+                            ? ((totalSumSq - prefixSumSq[end]) - sumR * sumR / rightN) / (rightN - 1) : 0.0;
+                    double weighted = ((double) leftN / n) * varL + ((double) rightN / n) * varR;
+                    gainByThreshold.put(canonical(X[order[pos]][j]), currentVar - weighted);
+                }
+                pos = end;
+            }
+
+            for (int i = 0; i < n; i++) {
+                Double gain = gainByThreshold.get(canonical(X[i][j]));
+                if (gain != null && gain > best.gain) {
+                    best = new SplitPoint(j, X[i][j], gain);
+                }
+            }
+        }
+        return best;
     }
 
     private DecisionTreeNode buildClassificationTree(double[][] X, double[] y, int depth, int maxDepth) {
@@ -931,47 +960,17 @@ public class AutoMlEngine {
             return node;
         }
 
-        int bestFeat = -1;
-        double bestThresh = 0;
-        double bestGiniGain = -1;
         double currentGini = calcGini(y);
-
-        int p = X[0].length;
-        for (int j = 0; j < p; j++) {
-            for (int i = 0; i < X.length; i++) {
-                double thresh = X[i][j];
-                List<Double> leftY = new ArrayList<>();
-                List<Double> rightY = new ArrayList<>();
-
-                for (int k = 0; k < X.length; k++) {
-                    if (X[k][j] <= thresh) leftY.add(y[k]);
-                    else rightY.add(y[k]);
-                }
-
-                if (leftY.size() < 1 || rightY.size() < 1) continue;
-
-                double giniL = calcGiniList(leftY);
-                double giniR = calcGiniList(rightY);
-                double weightedGini = ((double) leftY.size() / y.length * giniL) + ((double) rightY.size() / y.length * giniR);
-                double gain = currentGini - weightedGini;
-
-                if (gain > bestGiniGain) {
-                    bestGiniGain = gain;
-                    bestFeat = j;
-                    bestThresh = thresh;
-                }
-            }
-        }
-
-        if (bestFeat == -1 || bestGiniGain <= 0) {
+        SplitPoint best = findBestClassificationSplit(X, y, count1, currentGini);
+        if (best.feature < 0 || best.gain <= 0) {
             node.isLeaf = true;
             node.value = majority;
             node.prob = positiveRate;
             return node;
         }
 
-        node.featureIndex = bestFeat;
-        node.threshold = bestThresh;
+        node.featureIndex = best.feature;
+        node.threshold = best.threshold;
 
         List<double[]> leftX = new ArrayList<>();
         List<Double> leftY = new ArrayList<>();
@@ -979,7 +978,7 @@ public class AutoMlEngine {
         List<Double> rightY = new ArrayList<>();
 
         for (int i = 0; i < X.length; i++) {
-            if (X[i][bestFeat] <= bestThresh) {
+            if (X[i][best.feature] <= best.threshold) {
                 leftX.add(X[i]);
                 leftY.add(y[i]);
             } else {
@@ -991,6 +990,83 @@ public class AutoMlEngine {
         node.left = buildClassificationTree(leftX.toArray(new double[0][]), toArray(leftY), depth + 1, maxDepth);
         node.right = buildClassificationTree(rightX.toArray(new double[0][]), toArray(rightY), depth + 1, maxDepth);
         return node;
+    }
+
+    private SplitPoint findBestClassificationSplit(double[][] X, double[] y, int totalPositive, double currentGini) {
+        int n = X.length;
+        int p = X[0].length;
+        SplitPoint best = new SplitPoint(-1, 0, -1);
+
+        for (int j = 0; j < p; j++) {
+            Integer[] order = sortedOrder(X, j);
+            int[] prefixPositive = new int[n + 1];
+            for (int pos = 0; pos < n; pos++) {
+                prefixPositive[pos + 1] = prefixPositive[pos] + (y[order[pos]] >= 0.5 ? 1 : 0);
+            }
+
+            Map<Double, Double> gainByThreshold = new HashMap<>();
+            int pos = 0;
+            while (pos < n) {
+                int end = groupEnd(X, order, j, pos);
+                if (end < n) {
+                    int leftN = end;
+                    int rightN = n - end;
+                    int leftPositive = prefixPositive[end];
+                    int rightPositive = totalPositive - leftPositive;
+                    double weightedGini = ((double) leftN / n) * gini(leftN, leftPositive)
+                            + ((double) rightN / n) * gini(rightN, rightPositive);
+                    gainByThreshold.put(canonical(X[order[pos]][j]), currentGini - weightedGini);
+                }
+                pos = end;
+            }
+
+            for (int i = 0; i < n; i++) {
+                Double gain = gainByThreshold.get(canonical(X[i][j]));
+                if (gain != null && gain > best.gain) {
+                    best = new SplitPoint(j, X[i][j], gain);
+                }
+            }
+        }
+        return best;
+    }
+
+    private Integer[] sortedOrder(double[][] X, int feature) {
+        Integer[] order = new Integer[X.length];
+        for (int i = 0; i < X.length; i++) order[i] = i;
+        Arrays.sort(order, Comparator.comparingDouble(i -> canonical(X[i][feature])));
+        return order;
+    }
+
+    private int groupEnd(double[][] X, Integer[] order, int feature, int start) {
+        double value = canonical(X[order[start]][feature]);
+        int end = start + 1;
+        while (end < order.length && Double.compare(canonical(X[order[end]][feature]), value) == 0) {
+            end++;
+        }
+        return end;
+    }
+
+    private double canonical(double value) {
+        return value == 0.0 ? 0.0 : value;
+    }
+
+    private double gini(int count, int positive) {
+        if (count == 0) return 0.0;
+        double p1 = (double) positive / count;
+        double p0 = 1.0 - p1;
+        return 1.0 - (p1 * p1 + p0 * p0);
+    }
+
+    private static final class SplitPoint {
+        final int feature;
+        final double threshold;
+        final double gain;
+
+        SplitPoint(int feature, double threshold, double gain) {
+            this.feature = feature;
+            this.threshold = threshold;
+            this.gain = gain;
+        }
     }
 
     private double predictRegressionTree(DecisionTreeNode node, double[] x) {

@@ -88,45 +88,72 @@ public class StatisticalTestEngine {
      * Pearson Correlation for Numeric + Numeric pairs with aligned paired filtering.
      */
     public TestResult computePearsonCorrelation(String var1, String var2, List<String> rawX, List<String> rawY) {
-        List<Double> x = new ArrayList<>();
-        List<Double> y = new ArrayList<>();
-
-        int nTotal = Math.min(rawX.size(), rawY.size());
+        int nTotal = Math.min(rawX == null ? 0 : rawX.size(), rawY == null ? 0 : rawY.size());
+        double[] x = new double[nTotal];
+        double[] y = new double[nTotal];
+        Arrays.fill(x, Double.NaN);
+        Arrays.fill(y, Double.NaN);
         for (int i = 0; i < nTotal; i++) {
             String sx = rawX.get(i);
             String sy = rawY.get(i);
             if (isValidNumber(sx) && isValidNumber(sy)) {
-                x.add(Double.parseDouble(sx));
-                y.add(Double.parseDouble(sy));
+                x[i] = Double.parseDouble(sx.trim());
+                y[i] = Double.parseDouble(sy.trim());
+            }
+        }
+        return computePearsonCorrelation(var1, var2, x, y);
+    }
+
+    /**
+     * Pearson Correlation over pre-parsed, row-aligned values.
+     *
+     * <p>Invalid/missing entries are encoded as {@link Double#NaN}. Callers that
+     * evaluate many pairs (association discovery, correlation matrices) parse each
+     * CSV column once and reuse the primitive arrays instead of re-parsing strings
+     * for every pair or boxing millions of {@code Double}s.</p>
+     */
+    public TestResult computePearsonCorrelation(String var1, String var2, double[] xVals, double[] yVals) {
+        int nTotal = Math.min(xVals == null ? 0 : xVals.length, yVals == null ? 0 : yVals.length);
+        int n = 0;
+        double sumX = 0.0;
+        double sumY = 0.0;
+        for (int i = 0; i < nTotal; i++) {
+            if (isFinite(xVals[i]) && isFinite(yVals[i])) {
+                n++;
+                sumX += xVals[i];
+                sumY += yVals[i];
             }
         }
 
-        int n = x.size();
         if (n < 4) {
             return new TestResult("PEARSON", 0.0, 1.0, 0.0, "r_squared", n, null, false,
                     String.format("Insufficient paired sample size (N=%d < 4) between %s and %s.", n, var1, var2), 0.0);
         }
 
-        DescriptiveStatistics statsX = new DescriptiveStatistics();
-        DescriptiveStatistics statsY = new DescriptiveStatistics();
-        x.forEach(statsX::addValue);
-        y.forEach(statsY::addValue);
+        double meanX = sumX / n;
+        double meanY = sumY / n;
+        double sxx = 0.0;
+        double syy = 0.0;
+        double sxy = 0.0;
+        for (int i = 0; i < nTotal; i++) {
+            if (isFinite(xVals[i]) && isFinite(yVals[i])) {
+                double dx = xVals[i] - meanX;
+                double dy = yVals[i] - meanY;
+                sxx += dx * dx;
+                syy += dy * dy;
+                sxy += dx * dy;
+            }
+        }
 
-        double stdX = statsX.getStandardDeviation();
-        double stdY = statsY.getStandardDeviation();
+        double stdX = Math.sqrt(sxx / (n - 1));
+        double stdY = Math.sqrt(syy / (n - 1));
 
         if (stdX == 0.0 || stdY == 0.0) {
             return new TestResult("PEARSON", 0.0, 1.0, 0.0, "r_squared", n, (double)(n - 2), false,
                     String.format("Zero variance detected in %s or %s; correlation cannot be determined.", var1, var2), 0.0);
         }
 
-        double meanX = statsX.getMean();
-        double meanY = statsY.getMean();
-        double cov = 0.0;
-        for (int i = 0; i < n; i++) {
-            cov += (x.get(i) - meanX) * (y.get(i) - meanY);
-        }
-        cov /= (n - 1);
+        double cov = sxy / (n - 1);
 
         double r = cov / (stdX * stdY);
         r = Math.max(-1.0, Math.min(1.0, r)); // clamp
@@ -195,14 +222,30 @@ public class StatisticalTestEngine {
      * Welch's t-test for Numeric + Two-Category pairs with paired alignment.
      */
     public TestResult computeWelchTTest(String numVar, String catVar, List<String> rawNum, List<String> rawCat) {
-        Map<String, List<Double>> groups = new HashMap<>();
-
-        int nTotal = Math.min(rawNum.size(), rawCat.size());
+        int nTotal = Math.min(rawNum == null ? 0 : rawNum.size(), rawCat == null ? 0 : rawCat.size());
+        double[] nums = new double[nTotal];
+        String[] cats = new String[nTotal];
+        Arrays.fill(nums, Double.NaN);
         for (int i = 0; i < nTotal; i++) {
             String sNum = rawNum.get(i);
-            String sCat = rawCat.get(i);
-            if (isValidNumber(sNum) && sCat != null && !sCat.trim().isEmpty() && !sCat.equalsIgnoreCase("na")) {
-                groups.computeIfAbsent(sCat.trim(), k -> new ArrayList<>()).add(Double.parseDouble(sNum));
+            nums[i] = isValidNumber(sNum) ? Double.parseDouble(sNum.trim()) : Double.NaN;
+            cats[i] = rawCat.get(i);
+        }
+        return computeWelchTTest(numVar, catVar, nums, cats);
+    }
+
+    /**
+     * Welch's t-test over pre-parsed, row-aligned values. Missing numeric values
+     * are encoded as {@link Double#NaN}.
+     */
+    public TestResult computeWelchTTest(String numVar, String catVar, double[] rawNum, String[] rawCat) {
+        Map<String, List<Double>> groups = new HashMap<>();
+
+        int nTotal = Math.min(rawNum == null ? 0 : rawNum.length, rawCat == null ? 0 : rawCat.length);
+        for (int i = 0; i < nTotal; i++) {
+            String sCat = rawCat[i];
+            if (isFinite(rawNum[i]) && isUsableCategory(sCat)) {
+                groups.computeIfAbsent(sCat.trim(), k -> new ArrayList<>()).add(rawNum[i]);
             }
         }
 
@@ -308,14 +351,30 @@ public class StatisticalTestEngine {
      * One-Way ANOVA for Numeric + Multi-Category (>2 groups).
      */
     public TestResult computeOneWayAnova(String numVar, String catVar, List<String> rawNum, List<String> rawCat) {
-        Map<String, List<Double>> groups = new HashMap<>();
-
-        int nTotal = Math.min(rawNum.size(), rawCat.size());
+        int nTotal = Math.min(rawNum == null ? 0 : rawNum.size(), rawCat == null ? 0 : rawCat.size());
+        double[] nums = new double[nTotal];
+        String[] cats = new String[nTotal];
+        Arrays.fill(nums, Double.NaN);
         for (int i = 0; i < nTotal; i++) {
             String sNum = rawNum.get(i);
-            String sCat = rawCat.get(i);
-            if (isValidNumber(sNum) && sCat != null && !sCat.trim().isEmpty() && !sCat.equalsIgnoreCase("na")) {
-                groups.computeIfAbsent(sCat.trim(), k -> new ArrayList<>()).add(Double.parseDouble(sNum));
+            nums[i] = isValidNumber(sNum) ? Double.parseDouble(sNum.trim()) : Double.NaN;
+            cats[i] = rawCat.get(i);
+        }
+        return computeOneWayAnova(numVar, catVar, nums, cats);
+    }
+
+    /**
+     * One-way ANOVA over pre-parsed, row-aligned values. Missing numeric values
+     * are encoded as {@link Double#NaN}.
+     */
+    public TestResult computeOneWayAnova(String numVar, String catVar, double[] rawNum, String[] rawCat) {
+        Map<String, List<Double>> groups = new HashMap<>();
+
+        int nTotal = Math.min(rawNum == null ? 0 : rawNum.length, rawCat == null ? 0 : rawCat.length);
+        for (int i = 0; i < nTotal; i++) {
+            String sCat = rawCat[i];
+            if (isFinite(rawNum[i]) && isUsableCategory(sCat)) {
+                groups.computeIfAbsent(sCat.trim(), k -> new ArrayList<>()).add(rawNum[i]);
             }
         }
 
@@ -394,15 +453,24 @@ public class StatisticalTestEngine {
      * Chi-Square Test of Independence for Categorical + Categorical pairs.
      */
     public TestResult computeChiSquare(String var1, String var2, List<String> raw1, List<String> raw2) {
+        int nTotal = Math.min(raw1 == null ? 0 : raw1.size(), raw2 == null ? 0 : raw2.size());
+        String[] values1 = raw1 == null ? new String[0] : raw1.subList(0, nTotal).toArray(new String[0]);
+        String[] values2 = raw2 == null ? new String[0] : raw2.subList(0, nTotal).toArray(new String[0]);
+        return computeChiSquare(var1, var2, values1, values2);
+    }
+
+    /**
+     * Chi-square test over pre-parsed, row-aligned categorical values.
+     */
+    public TestResult computeChiSquare(String var1, String var2, String[] raw1, String[] raw2) {
         Map<String, Map<String, Integer>> table = new HashMap<>();
         Set<String> cols = new HashSet<>();
 
-        int nTotal = Math.min(raw1.size(), raw2.size());
+        int nTotal = Math.min(raw1 == null ? 0 : raw1.length, raw2 == null ? 0 : raw2.length);
         for (int i = 0; i < nTotal; i++) {
-            String v1 = raw1.get(i);
-            String v2 = raw2.get(i);
-            if (v1 != null && !v1.trim().isEmpty() && !v1.equalsIgnoreCase("na") &&
-                    v2 != null && !v2.trim().isEmpty() && !v2.equalsIgnoreCase("na")) {
+            String v1 = raw1[i];
+            String v2 = raw2[i];
+            if (isUsableCategory(v1) && isUsableCategory(v2)) {
                 table.computeIfAbsent(v1.trim(), k -> new HashMap<>())
                         .merge(v2.trim(), 1, Integer::sum);
                 cols.add(v2.trim());
@@ -488,11 +556,18 @@ public class StatisticalTestEngine {
             return false;
         }
         try {
-            Double.parseDouble(s.trim());
-            return true;
+            return Double.isFinite(Double.parseDouble(s.trim()));
         } catch (NumberFormatException e) {
             return false;
         }
+    }
+
+    private boolean isUsableCategory(String s) {
+        return s != null && !s.trim().isEmpty() && !s.equalsIgnoreCase("na");
+    }
+
+    private boolean isFinite(double value) {
+        return !Double.isNaN(value) && !Double.isInfinite(value);
     }
 
     private double round(double val, int places) {

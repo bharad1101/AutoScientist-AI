@@ -20,4 +20,7 @@ public class WhatIfSchemaDto {
     private Double referencePrediction;
     private String referenceClass;
     private String referenceDescription;
+    private Integer positiveClassIndex;
+    private String positiveClassLabel;
+    private Double decisionThreshold;
 }

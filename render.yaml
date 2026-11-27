@@ -1,0 +1,109 @@
+version: "1"
+services:
+  - type: web
+    name: autoscientist-backend-preview
+    runtime: docker
+    branch: preview/verify-deployment
+    plan: starter
+    region: oregon
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health/ready
+    autoDeployTrigger: off
+    disk:
+      name: autoscientist-preview-uploads
+      mountPath: /app/uploads
+      sizeGB: 1
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: mysql
+      - key: SPRING_DATASOURCE_URL
+        sync: false
+      - key: SPRING_DATASOURCE_USERNAME
+        sync: false
+      - key: SPRING_DATASOURCE_PASSWORD
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: APP_CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: FILE_UPLOAD_DIR
+        value: /app/uploads/datasets
+      - key: SPRING_JPA_HIBERNATE_DDL_AUTO
+        value: validate
+      - key: SPRING_FLYWAY_ENABLED
+        value: "true"
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: ALLOW_PROXY_HEADERS
+        value: "true"
+      - key: FORWARD_HEADERS_STRATEGY
+        value: framework
+      - key: TRUSTED_PROXY_COUNT
+        value: "1"
+      - key: SPRING_MAIL_HOST
+        sync: false
+      - key: SPRING_MAIL_PORT
+        sync: false
+      - key: SPRING_MAIL_USERNAME
+        sync: false
+      - key: SPRING_MAIL_PASSWORD
+        sync: false
+      - key: PASSWORD_RESET_FROM
+        sync: false
+
+  - type: web
+    name: autoscientist-backend-production
+    runtime: docker
+    branch: main
+    plan: starter
+    region: oregon
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health/ready
+    autoDeployTrigger: off
+    disk:
+      name: autoscientist-production-uploads
+      mountPath: /app/uploads
+      sizeGB: 1
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: mysql
+      - key: SPRING_DATASOURCE_URL
+        sync: false
+      - key: SPRING_DATASOURCE_USERNAME
+        sync: false
+      - key: SPRING_DATASOURCE_PASSWORD
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: APP_CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: FILE_UPLOAD_DIR
+        value: /app/uploads/datasets
+      - key: SPRING_JPA_HIBERNATE_DDL_AUTO
+        value: validate
+      - key: SPRING_FLYWAY_ENABLED
+        value: "true"
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: ALLOW_PROXY_HEADERS
+        value: "true"
+      - key: FORWARD_HEADERS_STRATEGY
+        value: framework
+      - key: TRUSTED_PROXY_COUNT
+        value: "1"
+      - key: SPRING_MAIL_HOST
+        sync: false
+      - key: SPRING_MAIL_PORT
+        sync: false
+      - key: SPRING_MAIL_USERNAME
+        sync: false
+      - key: SPRING_MAIL_PASSWORD
+        sync: false
+      - key: PASSWORD_RESET_FROM
+        sync: false

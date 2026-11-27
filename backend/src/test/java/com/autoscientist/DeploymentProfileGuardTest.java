@@ -15,6 +15,7 @@ import java.sql.DatabaseMetaData;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -39,11 +40,20 @@ class DeploymentProfileGuardTest {
     @Test
     void devProfileIsAcceptedLocally() {
         when(environment.acceptsProfiles(Profiles.of("dev"))).thenReturn(true);
-        when(environment.getProperty("RENDER", "false")).thenReturn("false");
-        when(environment.getProperty("RENDER_SERVICE_ID", "")).thenReturn("");
-        when(environment.getProperty("RENDER_EXTERNAL_URL", "")).thenReturn("");
+        lenient().when(environment.getProperty("APP_ENVIRONMENT")).thenReturn("local");
 
         assertThatCode(() -> guard.run(null)).doesNotThrowAnyException();
+        verifyNoInteractions(dataSource);
+    }
+
+    @Test
+    void devProfileIsRejectedOnUnacknowledgedHost() {
+        when(environment.acceptsProfiles(Profiles.of("dev"))).thenReturn(true);
+
+        assertThatThrownBy(() -> guard.run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("APP_ENVIRONMENT=local")
+                .hasMessageContaining("SPRING_PROFILES_ACTIVE=mysql");
         verifyNoInteractions(dataSource);
     }
 
@@ -87,11 +97,39 @@ class DeploymentProfileGuardTest {
     }
 
     @Test
-    void testProfileIsAllowedWithEmbeddedDatabase() {
+    void testProfileIsAllowedWithEmbeddedDatabaseOnlyWhenExplicitlyLocal() {
+        when(environment.acceptsProfiles(Profiles.of("dev"))).thenReturn(false);
+        when(environment.acceptsProfiles(Profiles.of("test"))).thenReturn(true);
+        lenient().when(environment.getProperty("APP_ENVIRONMENT")).thenReturn("local");
+
+        assertThatCode(() -> guard.run(null)).doesNotThrowAnyException();
+        verifyNoInteractions(dataSource);
+    }
+
+    @Test
+    void testProfileIsRejectedWithoutExplicitLocalOptIn() {
         when(environment.acceptsProfiles(Profiles.of("dev"))).thenReturn(false);
         when(environment.acceptsProfiles(Profiles.of("test"))).thenReturn(true);
 
-        assertThatCode(() -> guard.run(null)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> guard.run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("test")
+                .hasMessageContaining("APP_ENVIRONMENT=local");
+        verifyNoInteractions(dataSource);
+    }
+
+    @Test
+    void testProfileIsRejectedOnHostedRuntime() {
+        when(environment.acceptsProfiles(Profiles.of("dev"))).thenReturn(false);
+        when(environment.acceptsProfiles(Profiles.of("test"))).thenReturn(true);
+        when(environment.acceptsProfiles(Profiles.of("mysql"))).thenReturn(false);
+        lenient().when(environment.getProperty("APP_ENVIRONMENT")).thenReturn("local");
+        when(environment.getProperty("RENDER", "false")).thenReturn("true");
+
+        assertThatThrownBy(() -> guard.run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("test")
+                .hasMessageContaining("SPRING_PROFILES_ACTIVE=mysql");
         verifyNoInteractions(dataSource);
     }
 

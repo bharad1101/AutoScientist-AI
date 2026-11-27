@@ -73,7 +73,7 @@ export default function AutoMlPage() {
     } catch (err) {
       console.error('Failed to load feature effect:', err);
       setFeatureEffectError(
-        err.response?.data?.message || err.message || 'Unable to compute feature response graph.'
+        err.response?.data?.message || 'Unable to compute feature response graph.'
       );
       setFeatureEffect(null);
     } finally {
@@ -172,7 +172,6 @@ export default function AutoMlPage() {
       console.error('Failed to load active dataset details:', err);
       setError(
         err.response?.data?.message ||
-          err.message ||
           'Unable to load the active dataset from server.'
       );
     } finally {
@@ -257,7 +256,7 @@ export default function AutoMlPage() {
         featureValues: whatIfInputs,
       });
       setWhatIfResult(res.data);
-    } catch (err) {
+    } catch {
       setError('What-If simulation failed.');
     } finally {
       setWhatIfLoading(false);
@@ -278,12 +277,19 @@ export default function AutoMlPage() {
     const groups = Object.keys(positiveRates);
     if (!groups.length) return null;
     const isRegression = results?.problemType === 'REGRESSION';
+    const positiveRateLabel = isRegression
+      ? 'Mean prediction'
+      : fairness.positiveClassLabel
+        ? `Rate for ${fairness.positiveClassLabel}`
+        : fairness.binaryClassification === false
+          ? 'Class-1 prediction rate'
+          : 'Positive rate';
     return {
       labels: groups,
       datasets: [
         {
           type: 'bar',
-          label: isRegression ? 'Mean prediction' : 'Positive rate',
+          label: positiveRateLabel,
           data: groups.map((g) => positiveRates[g]),
           backgroundColor: 'rgba(37, 99, 235, 0.7)',
           borderRadius: 3,
@@ -393,7 +399,7 @@ export default function AutoMlPage() {
   }, [results]);
 
   // Chart configuration for Permutation Feature Importance
-  const featureChartData = results?.featureImportances
+  const featureChartData = results?.featureImportances?.length
     ? {
         labels: results.featureImportances.map((f) => f.featureName),
         datasets: [
@@ -424,6 +430,18 @@ export default function AutoMlPage() {
     return [];
   }, [results, whatIfSchema, selectedDataset, targetColumn]);
 
+  const featureEffectSemantics = useMemo(() => {
+    if (!featureEffect) return null;
+    const binaryClassification = featureEffect.binaryClassification !== false;
+    const probabilityStatus =
+      featureEffect.probabilityStatus || (binaryClassification ? 'AVAILABLE' : 'NOT_BINARY');
+    const positiveClassLabel =
+      featureEffect.positiveClassLabel ||
+      featureEffect.probabilityClassLabel ||
+      (binaryClassification ? 'positive class' : null);
+    return { binaryClassification, probabilityStatus, positiveClassLabel };
+  }, [featureEffect]);
+
   const featureEffectChartData = useMemo(() => {
     if (!featureEffect || !featureEffect.supported) return null;
 
@@ -431,6 +449,12 @@ export default function AutoMlPage() {
       const labels = featureEffect.points.map((p) => p.x);
       const isClassification = featureEffect.problemType === 'CLASSIFICATION';
       const hasProba = featureEffect.points.some((p) => p.probability != null);
+      const showProbability =
+        isClassification &&
+        featureEffectSemantics?.binaryClassification &&
+        featureEffectSemantics.probabilityStatus === 'AVAILABLE' &&
+        hasProba;
+      const probabilityLabel = `P(${featureEffectSemantics?.positiveClassLabel || 'positive class'})`;
 
       const datasets = [
         {
@@ -446,9 +470,9 @@ export default function AutoMlPage() {
         },
       ];
 
-      if (isClassification && hasProba) {
+      if (showProbability) {
         datasets.push({
-          label: 'Class Probability',
+          label: probabilityLabel,
           data: featureEffect.points.map((p) => p.probability),
           borderColor: 'rgb(25, 135, 84)',
           backgroundColor: 'transparent',
@@ -472,7 +496,7 @@ export default function AutoMlPage() {
               callbacks: {
                 label: (ctx) => {
                   if (ctx.dataset.yAxisID === 'y1') {
-                    return `Probability: ${(ctx.parsed.y * 100).toFixed(1)}%`;
+                    return `${probabilityLabel}: ${(ctx.parsed.y * 100).toFixed(1)}%`;
                   }
                   return `Predicted ${featureEffect.targetColumn}: ${ctx.parsed.y}`;
                 },
@@ -492,7 +516,7 @@ export default function AutoMlPage() {
                 text: `Model Output (${featureEffect.targetColumn})`,
               },
             },
-            ...(isClassification && hasProba
+            ...(showProbability
               ? {
                   y1: {
                     type: 'linear',
@@ -500,7 +524,7 @@ export default function AutoMlPage() {
                     position: 'right',
                     min: 0,
                     max: 1,
-                    title: { display: true, text: 'Probability' },
+                    title: { display: true, text: probabilityLabel },
                     grid: { drawOnChartArea: false },
                   },
                 }
@@ -512,6 +536,12 @@ export default function AutoMlPage() {
 
     if (featureEffect.kind === 'CATEGORICAL' && featureEffect.categories && featureEffect.categories.length > 0) {
       const labels = featureEffect.categories.map((c) => c.category);
+      const showProbability =
+        featureEffect.problemType === 'CLASSIFICATION' &&
+        featureEffectSemantics?.binaryClassification &&
+        featureEffectSemantics.probabilityStatus === 'AVAILABLE' &&
+        featureEffect.categories.some((c) => c.probability != null);
+      const probabilityLabel = `P(${featureEffectSemantics?.positiveClassLabel || 'positive class'})`;
       return {
         type: 'bar',
         data: {
@@ -525,16 +555,32 @@ export default function AutoMlPage() {
               borderWidth: 1,
               borderRadius: 4,
             },
+            ...(showProbability
+              ? [
+                  {
+                    label: probabilityLabel,
+                    data: featureEffect.categories.map((c) => c.probability),
+                    backgroundColor: 'transparent',
+                    borderColor: 'rgb(25, 135, 84)',
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    yAxisID: 'y1',
+                  },
+                ]
+              : []),
           ],
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            legend: { display: false },
+            legend: { display: showProbability, position: 'top' },
             tooltip: {
               callbacks: {
-                label: (ctx) => `Predicted ${featureEffect.targetColumn}: ${ctx.parsed.y}`,
+                label: (ctx) =>
+                  ctx.dataset.label === probabilityLabel
+                    ? `${probabilityLabel}: ${(ctx.parsed.y * 100).toFixed(1)}%`
+                    : `Predicted ${featureEffect.targetColumn}: ${ctx.parsed.y}`,
               },
             },
           },
@@ -551,13 +597,26 @@ export default function AutoMlPage() {
                 text: `Model Output (${featureEffect.targetColumn})`,
               },
             },
+            ...(showProbability
+              ? {
+                  y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    min: 0,
+                    max: 1,
+                    title: { display: true, text: probabilityLabel },
+                    grid: { drawOnChartArea: false },
+                  },
+                }
+              : {}),
           },
         },
       };
     }
 
     return null;
-  }, [featureEffect]);
+  }, [featureEffect, featureEffectSemantics]);
 
   const evaluationModel =
     results?.bestModel?.evaluation
@@ -975,7 +1034,11 @@ export default function AutoMlPage() {
                             <p className="small text-muted mb-0 mt-2">
                               {results.problemType === 'REGRESSION'
                                 ? 'Mean predicted outcome per cohort (bars) and mean absolute error (line).'
-                                : 'Positive prediction rate per cohort (bars) and error rate (line).'}
+                                : results.fairness.positiveClassLabel
+                                  ? `Prediction rate for ${results.fairness.positiveClassLabel} per cohort (bars) and error rate (line).`
+                                  : results.fairness.binaryClassification === false
+                                    ? 'Class-1 prediction rate per cohort (bars) and error rate (line).'
+                                    : 'Positive prediction rate per cohort (bars) and error rate (line).'}
                               {fairnessSampleNote ? ` ${fairnessSampleNote}` : ''}
                             </p>
                           </div>
@@ -1191,6 +1254,19 @@ export default function AutoMlPage() {
                       <i className="bi bi-info-circle me-1"></i>
                       {featureEffect.scientificNote}
                     </p>
+                    {featureEffect.problemType === 'CLASSIFICATION' &&
+                      featureEffectSemantics?.probabilityStatus === 'NOT_BINARY' && (
+                        <p className="small text-muted mt-2 mb-0" data-testid="feature-probability-note">
+                          Positive-class probabilities are not defined for multiclass classification. The output
+                          line shows encoded class indices.
+                        </p>
+                      )}
+                    {featureEffect.problemType === 'CLASSIFICATION' &&
+                      featureEffectSemantics?.probabilityStatus === 'UNAVAILABLE_NO_SCORES' && (
+                        <p className="small text-muted mt-2 mb-0" data-testid="feature-probability-note">
+                          This model does not expose continuous scores, so no probability curve is shown.
+                        </p>
+                      )}
                   </div>
                 )}
               </div>
@@ -1303,7 +1379,7 @@ export default function AutoMlPage() {
                         <h4 className="fw-semibold text-secondary mb-0">
                           {whatIfResult.problemType === 'REGRESSION'
                             ? whatIfResult.referencePrediction?.toFixed(3)
-                            : whatIfResult.referencePrediction?.toFixed(3)}
+                            : whatIfResult.referenceClass ?? whatIfResult.referencePrediction?.toFixed(3)}
                         </h4>
                       </div>
                       <div className="col-md-4 text-center">
@@ -1325,6 +1401,39 @@ export default function AutoMlPage() {
                         ? ` Training target mean: ${Number(whatIfResult.baselineMean).toFixed(3)}.`
                         : ''}
                     </p>
+
+                    {whatIfResult.problemType === 'CLASSIFICATION' && (
+                      <div className="small mt-3 mb-0" data-testid="whatif-class-semantics">
+                        {whatIfResult.probabilityStatus === 'AVAILABLE' ? (
+                          <p className="mb-1">
+                            <strong>
+                              P({whatIfResult.positiveClassLabel || `Class ${whatIfResult.positiveClassIndex}`}):{' '}
+                              {whatIfResult.positiveClassProbability != null
+                                ? `${(whatIfResult.positiveClassProbability * 100).toFixed(1)}%`
+                                : 'N/A'}
+                            </strong>
+                            {whatIfResult.decisionThreshold != null
+                              ? ` Decision threshold: ${whatIfResult.decisionThreshold}.`
+                              : ''}
+                          </p>
+                        ) : whatIfResult.probabilityStatus === 'NOT_BINARY' ? (
+                          <p className="mb-1 text-muted">
+                            Positive-class probability is not defined for multiclass classification.
+                          </p>
+                        ) : (
+                          <p className="mb-1 text-muted">
+                            This model does not expose continuous class scores.
+                          </p>
+                        )}
+                        {whatIfResult.predictedClassIndex != null &&
+                          whatIfResult.positiveClassIndex != null &&
+                          whatIfResult.predictedClassIndex !== whatIfResult.positiveClassIndex && (
+                            <p className="mb-0 text-muted">
+                              The simulated class is not the positive class used for the probability above.
+                            </p>
+                          )}
+                      </div>
+                    )}
 
                     {whatIfResult.warnings?.length > 0 && (
                       <div className="alert alert-warning mt-3 mb-0">

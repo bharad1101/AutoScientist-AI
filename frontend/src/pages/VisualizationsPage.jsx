@@ -25,6 +25,9 @@ import {
 
 ChartJS.register(BarController, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
+const CORRELATION_DISPLAY_LIMIT = 40;
+const BOXPLOT_CHART_LIMIT = 50;
+
 class VisualizationsErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -98,6 +101,7 @@ function VisualizationsPageContent() {
   const [loadingGrouped, setLoadingGrouped] = useState(false);
 
   const requestSeq = useRef(0);
+  const groupedSeq = useRef(0);
 
   const loadData = useCallback(async (currentId) => {
     if (!currentId) {
@@ -105,8 +109,10 @@ function VisualizationsPageContent() {
       return;
     }
     const seq = ++requestSeq.current;
+    const groupedRequestSeq = ++groupedSeq.current;
     try {
       setLoading(true);
+      setLoadingGrouped(false);
       setError('');
       if (selectDataset) selectDataset(currentId);
 
@@ -145,12 +151,13 @@ function VisualizationsPageContent() {
 
         setSelectedNumVar(initialNum);
         setSelectedCatVar(initialCat);
+        setGroupedSummary([]);
 
         if (initialNum && initialCat) {
           const grp = await analysisService
             .getGroupedSummary(currentId, initialNum, initialCat)
             .catch(() => null);
-          if (seq === requestSeq.current && grp && grp.data) {
+          if (seq === requestSeq.current && groupedRequestSeq === groupedSeq.current && grp && grp.data) {
             setGroupedSummary(grp.data);
           }
         }
@@ -163,7 +170,7 @@ function VisualizationsPageContent() {
     } catch (err) {
       if (seq === requestSeq.current) {
         console.error('Failed to load visualization data:', err);
-        setError(err.response?.data?.message || err.message || 'Failed to load visualization data.');
+        setError(err.response?.data?.message || 'Failed to load visualization data.');
       }
     } finally {
       if (seq === requestSeq.current) {
@@ -192,20 +199,29 @@ function VisualizationsPageContent() {
   const handleGroupedChange = async (num, cat) => {
     setSelectedNumVar(num);
     setSelectedCatVar(cat);
-    if (!num || !cat || !activeId) return;
+    const seq = ++groupedSeq.current;
+    if (!num || !cat || !activeId) {
+      setGroupedSummary([]);
+      setLoadingGrouped(false);
+      return;
+    }
     try {
       setLoadingGrouped(true);
       const res = await analysisService.getGroupedSummary(activeId, num, cat);
+      if (seq !== groupedSeq.current) return;
       if (res && res.data) {
         setGroupedSummary(res.data);
       } else {
         setGroupedSummary([]);
       }
     } catch (err) {
+      if (seq !== groupedSeq.current) return;
       console.error('Failed to update grouped summary:', err);
       setGroupedSummary([]);
     } finally {
-      setLoadingGrouped(false);
+      if (seq === groupedSeq.current) {
+        setLoadingGrouped(false);
+      }
     }
   };
 
@@ -229,6 +245,13 @@ function VisualizationsPageContent() {
         ),
     [boxPlots]
   );
+
+  const boxPlotChartRows = useMemo(() => {
+    if (boxPlotChartData.length <= BOXPLOT_CHART_LIMIT) return boxPlotChartData;
+    return [...boxPlotChartData]
+      .sort((a, b) => (Number(b.iqr) || 0) - (Number(a.iqr) || 0))
+      .slice(0, BOXPLOT_CHART_LIMIT);
+  }, [boxPlotChartData]);
 
   // Significance lookup for the correlation heat-map: key = "row|col".
   const correlationSignificance = useMemo(() => {
@@ -256,6 +279,42 @@ function VisualizationsPageContent() {
       }
     }
     return count;
+  }, [corrMatrix]);
+
+  const correlationDisplay = useMemo(() => {
+    const vars = corrMatrix?.variables;
+    const matrix = corrMatrix?.matrix;
+    if (!Array.isArray(vars) || !Array.isArray(matrix) || vars.length === 0) return null;
+
+    let indices = vars.map((_, i) => i);
+    const truncated = vars.length > CORRELATION_DISPLAY_LIMIT;
+    if (truncated) {
+      const strengths = indices.map((i) => {
+        let maxAbs = 0;
+        const row = matrix[i] || [];
+        for (let j = 0; j < vars.length; j++) {
+          if (i === j) continue;
+          const value = row[j];
+          if (typeof value === 'number' && Number.isFinite(value)) {
+            maxAbs = Math.max(maxAbs, Math.abs(value));
+          }
+        }
+        return { i, maxAbs };
+      });
+      strengths.sort((a, b) => b.maxAbs - a.maxAbs || a.i - b.i);
+      indices = strengths.slice(0, CORRELATION_DISPLAY_LIMIT).map((s) => s.i).sort((a, b) => a - b);
+    }
+
+    return {
+      variables: indices.map((i) => vars[i]),
+      matrix: indices.map((r) => indices.map((c) => (matrix[r] || [])[c])),
+      sampleSizes: Array.isArray(corrMatrix?.sampleSizes)
+        ? indices.map((i) => corrMatrix.sampleSizes[i])
+        : null,
+      truncated,
+      total: vars.length,
+      displayed: indices.length,
+    };
   }, [corrMatrix]);
 
   const columns = dataset?.columns || [];
@@ -461,26 +520,33 @@ function VisualizationsPageContent() {
         </div>
 
         {/* 2. Correlation Matrix Heatmap */}
-        {corrMatrix && Array.isArray(corrMatrix.variables) && corrMatrix.variables.length > 0 && Array.isArray(corrMatrix.matrix) && (
-          <div className="card shadow-sm border-0 mb-4">
-            <div className="card-header bg-white py-3 border-bottom">
-              <h5 className="fw-bold mb-0">
-                <i className="bi bi-grid-3x3-gap-fill text-success me-2"></i>
-                Pearson Correlation Structure
-              </h5>
-              <small className="text-muted">
-                Empirical pairwise correlation coefficients (-1.0 to +1.0) between numeric features (Identifiers
-                excluded). Cells marked with * are statistically significant at p &lt; 0.05.
-                {significantPairs > 0 && ` ${significantPairs} significant pair(s) detected.`}
-              </small>
-            </div>
-            <div className="card-body p-3">
+        <div className="card shadow-sm border-0 mb-4" data-testid="correlation-section">
+          <div className="card-header bg-white py-3 border-bottom">
+            <h5 className="fw-bold mb-0">
+              <i className="bi bi-grid-3x3-gap-fill text-success me-2"></i>
+              Pearson Correlation Structure
+            </h5>
+            <small className="text-muted">
+              Empirical pairwise correlation coefficients (-1.0 to +1.0) between numeric features (Identifiers
+              excluded). Cells marked with * are statistically significant at p &lt; 0.05.
+              {significantPairs > 0 && ` ${significantPairs} significant pair(s) detected.`}
+            </small>
+            {correlationDisplay?.truncated && (
+              <div className="small text-muted mt-1" data-testid="correlation-display-limit">
+                <i className="bi bi-info-circle me-1"></i>
+                Displaying the {correlationDisplay.displayed} of {correlationDisplay.total} numeric features with
+                the strongest absolute pair correlations. The full matrix is still computed and returned by the API.
+              </div>
+            )}
+          </div>
+          <div className="card-body p-3">
+            {correlationDisplay ? (
               <div className="table-responsive">
                 <table className="table table-sm table-bordered text-center align-middle mb-0 font-monospace small">
                   <thead className="table-light">
                     <tr>
                       <th className="text-start">Feature</th>
-                      {corrMatrix.variables.map((v) => (
+                      {correlationDisplay.variables.map((v) => (
                         <th key={v} className="text-truncate" style={{ maxWidth: '110px' }}>
                           {v}
                         </th>
@@ -488,8 +554,8 @@ function VisualizationsPageContent() {
                     </tr>
                   </thead>
                   <tbody>
-                    {corrMatrix.variables.map((rowVar, rIdx) => {
-                      const row = corrMatrix.matrix[rIdx];
+                    {correlationDisplay.variables.map((rowVar, rIdx) => {
+                      const row = correlationDisplay.matrix[rIdx];
                       if (!Array.isArray(row)) return null;
                       return (
                         <tr key={rowVar}>
@@ -513,7 +579,9 @@ function VisualizationsPageContent() {
                             } else if (val < -0.2) {
                               bg = '#fce4ec';
                             }
-                            const pValue = correlationSignificance.get(`${rowVar}|${corrMatrix.variables[cIdx]}`);
+                            const pValue = correlationSignificance.get(
+                              `${rowVar}|${correlationDisplay.variables[cIdx]}`
+                            );
                             const isSignificant = rIdx !== cIdx && pValue != null && pValue < 0.05;
                             return (
                               <td
@@ -532,8 +600,8 @@ function VisualizationsPageContent() {
                                           ? ` | p = ${pValue < 0.0001 ? '< 0.0001' : pValue.toFixed(4)}`
                                           : ' | p-value unavailable'
                                       }${
-                                        corrMatrix.sampleSizes?.length
-                                          ? ` | n = ${corrMatrix.sampleSizes[Math.max(rIdx, cIdx)]}`
+                                        correlationDisplay.sampleSizes?.length
+                                          ? ` | n = ${correlationDisplay.sampleSizes[Math.max(rIdx, cIdx)]}`
                                           : ''
                                       }`
                                 }
@@ -549,35 +617,62 @@ function VisualizationsPageContent() {
                   </tbody>
                 </table>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* 3. Five-Number Distribution Summary (Box Plots) */}
-        {boxPlots && Array.isArray(boxPlots) && boxPlots.length > 0 && (
-          <div className="card shadow-sm border-0 mb-4">
-            <div className="card-header bg-white py-3 border-bottom">
-              <h5 className="fw-bold mb-0">
-                <i className="bi bi-symmetry-vertical text-info me-2"></i>
-                Five-Number Distribution Summary
-              </h5>
-              <small className="text-muted">
-                Min, Q1, Median, Q3, Max, IQR, and Outlier frequency for continuous variables.
-              </small>
-            </div>
-            {boxPlotChartData.length > 0 && (
-              <div className="card-body p-4 border-bottom">
-                <h6 className="fw-bold small text-uppercase text-muted mb-2">
-                  <i className="bi bi-bar-chart-steps me-1"></i>Box &amp; Whisker Plot
-                </h6>
-                <BoxPlotChart data={boxPlotChartData} height={Math.max(320, boxPlotChartData.length * 40)} />
-                <p className="small text-muted mb-0 mt-2">
-                  <i className="bi bi-info-circle me-1"></i>
-                  Boxes span Q1–Q3, the dark line is the median, whiskers reach the observed min/max and red points are
-                  outliers (1.5 × IQR rule) detected on the canonical dataset.
+            ) : (
+              <div className="p-5 text-center bg-light rounded border" data-testid="correlation-empty">
+                <i className="bi bi-grid-3x3-gap text-muted fs-1 d-block mb-2"></i>
+                <h6 className="fw-semibold text-secondary mb-1">Correlation matrix unavailable</h6>
+                <p className="text-muted small mb-0">
+                  At least two analytically eligible numeric columns with finite paired observations are required.
+                  If this dataset has them, retry the analysis.
                 </p>
               </div>
             )}
+          </div>
+        </div>
+
+        {/* 3. Five-Number Distribution Summary (Box Plots) */}
+        <div className="card shadow-sm border-0 mb-4" data-testid="boxplot-section">
+          <div className="card-header bg-white py-3 border-bottom">
+            <h5 className="fw-bold mb-0">
+              <i className="bi bi-symmetry-vertical text-info me-2"></i>
+              Five-Number Distribution Summary
+            </h5>
+            <small className="text-muted">
+              Min, Q1, Median, Q3, Max, IQR, and Outlier frequency for continuous variables.
+            </small>
+          </div>
+          {boxPlotChartData.length > 0 ? (
+            <div className="card-body p-4 border-bottom">
+              <h6 className="fw-bold small text-uppercase text-muted mb-2">
+                <i className="bi bi-bar-chart-steps me-1"></i>Box &amp; Whisker Plot
+              </h6>
+              <BoxPlotChart data={boxPlotChartRows} height={Math.max(320, boxPlotChartRows.length * 40)} />
+              {boxPlotChartData.length > boxPlotChartRows.length && (
+                <p className="small text-muted mb-0 mt-2" data-testid="boxplot-display-limit">
+                  <i className="bi bi-info-circle me-1"></i>
+                  Displaying the {boxPlotChartRows.length} of {boxPlotChartData.length} continuous variables with the
+                  largest interquartile range. Every variable remains listed in the summary table below.
+                </p>
+              )}
+              <p className="small text-muted mb-0 mt-2">
+                <i className="bi bi-info-circle me-1"></i>
+                Boxes span Q1–Q3, the dark line is the median, whiskers reach the observed min/max and red points are
+                outliers (1.5 × IQR rule) detected on the canonical dataset.
+              </p>
+            </div>
+          ) : (
+            <div className="card-body">
+              <div className="p-5 text-center bg-light rounded border" data-testid="boxplot-chart-empty">
+                <i className="bi bi-symmetry-vertical text-muted fs-1 d-block mb-2"></i>
+                <h6 className="fw-semibold text-secondary mb-1">No box plot distributions available</h6>
+                <p className="text-muted small mb-0">
+                  Continuous columns with at least one finite observation are required to summarize a five-number
+                  distribution.
+                </p>
+              </div>
+            </div>
+          )}
+          {boxPlots && Array.isArray(boxPlots) && boxPlots.length > 0 ? (
             <div className="card-body p-0">
               <div className="table-responsive">
                 <table className="table table-hover align-middle mb-0">
@@ -621,8 +716,15 @@ function VisualizationsPageContent() {
                 </table>
               </div>
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="card-body pt-0">
+              <p className="text-muted small mb-0">
+                The per-variable summary table is unavailable because no eligible numeric summaries were returned.
+              </p>
+            </div>
+          )}
+        </div>
+
       </WorkflowNavigator>
     </div>
   );

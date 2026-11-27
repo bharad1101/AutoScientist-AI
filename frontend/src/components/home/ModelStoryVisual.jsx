@@ -16,14 +16,6 @@ export default function ModelStoryVisual() {
     { rank: 4, name: 'Decision Tree (Baseline)', auc: '0.771', f1: '0.725', logLoss: '0.490', seed: '42 (5-Fold CV)', status: 'Baseline' },
   ];
 
-  const features = [
-    { name: 'biomarker_a', imp: 34.2, color: 'var(--home-accent-cyan)' },
-    { name: 'age', imp: 21.5, color: 'var(--home-accent-indigo)' },
-    { name: 'treatment_arm', imp: 18.1, color: 'var(--home-accent-violet)' },
-    { name: 'systolic_bp', imp: 14.2, color: '#38BDF8' },
-    { name: 'cholesterol_mg_dl', imp: 12.0, color: '#818CF8' },
-  ];
-
   // Sigmoid-based response curve calculation
   const predictedProb = Math.min(0.98, Math.max(0.04, 1 / (1 + Math.exp(-0.06 * (sliderVal - 50))))).toFixed(2);
 

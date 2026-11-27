@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { authService } from '../services/authService';
+import { getApiErrorMessage } from '../services/apiErrors';
 
 const ForgotPasswordPage = () => {
   const [email, setEmail] = useState('');
@@ -16,14 +17,7 @@ const ForgotPasswordPage = () => {
       await authService.forgotPassword(email.trim());
       setSent(true);
     } catch (err) {
-      if (!err.response) {
-        setError('Unable to connect to AutoScientist server. Please verify the backend is running.');
-      } else if (err.response.status === 400 && err.response.data?.data) {
-        const fieldError = Object.values(err.response.data.data)[0];
-        setError(fieldError || err.response.data?.message || 'Invalid email address.');
-      } else {
-        setError(err.response?.data?.message || err.message || 'Could not request a password reset.');
-      }
+      setError(getApiErrorMessage(err, 'Could not request a password reset.'));
     } finally {
       setSubmitting(false);
     }
@@ -53,8 +47,8 @@ const ForgotPasswordPage = () => {
               <div className="alert alert-success" role="status">
                 <div className="fw-semibold mb-1">Check your inbox</div>
                 <div className="small">
-                  If an account exists for <span className="fw-semibold">{email.trim()}</span>, a password
-                  reset link has been sent. The link expires shortly and can be used only once.
+                  If an account exists for <span className="fw-semibold">{email.trim()}</span>, we'll
+                  attempt to send password reset instructions. The link expires shortly and can be used only once.
                 </div>
               </div>
             ) : (

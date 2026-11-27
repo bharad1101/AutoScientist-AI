@@ -8,4 +8,11 @@
 **/data/
 **/.env
 **/.env.*
+!.env.example
 *.log
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore

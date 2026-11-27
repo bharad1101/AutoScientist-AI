@@ -52,9 +52,6 @@ public class BiomedicalClassificationPipelineTest {
         if (!Files.exists(csvPath)) {
             csvPath = Paths.get("test-data/biomedical_patient_data.csv");
         }
-        if (!Files.exists(csvPath)) {
-            csvPath = Paths.get("/Applications/AutoScientist AI/test-data/biomedical_patient_data.csv");
-        }
         byte[] csvBytes = Files.readAllBytes(csvPath);
 
         Dataset dataset = Dataset.builder()
@@ -125,6 +122,10 @@ public class BiomedicalClassificationPipelineTest {
         assertEquals("CLASSIFICATION", split.getProblemType());
         assertNotNull(split.getClassMap());
         assertEquals(2, split.getClassMap().size());
+        assertTrue(split.isBinaryClassification());
+        assertEquals(1, split.getPositiveClassIndex());
+        assertNotNull(split.getPositiveClassLabel());
+        assertEquals(split.getReverseClassMap().get(1), split.getPositiveClassLabel());
 
         // 6. AutoML Classification Benchmark (Logistic Regression, Decision Tree, Random Forest)
         List<ModelBenchmarkResult> modelResults = autoMlEngine.runAutoMlBenchmark(split);
@@ -147,6 +148,8 @@ public class BiomedicalClassificationPipelineTest {
         assertNotNull(fairness);
         assertNotNull(fairness.getDisparateImpactStatus());
         assertNotNull(fairness.getRecommendation());
+        assertEquals(split.getPositiveClassIndex(), fairness.getPositiveClassIndex());
+        assertEquals(split.getPositiveClassLabel(), fairness.getPositiveClassLabel());
 
         // 9. Cohort Stability / Drift
         DatasetDriftReportDto driftReport = driftEngine.analyzeDrift(

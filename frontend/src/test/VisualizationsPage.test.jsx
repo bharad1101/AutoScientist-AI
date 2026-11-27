@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import VisualizationsPage from '../pages/VisualizationsPage';
 import { datasetService } from '../services/datasetService';
 import { analysisService } from '../services/analysisService';
@@ -50,8 +50,17 @@ vi.mock('../components/BoxPlotChart', () => ({
 vi.mock('react-chartjs-2', () => ({
   Bar: (props) => <div data-testid="mock-bar-chart" data-labels={JSON.stringify(props.data?.labels)} />,
   Line: (props) => <div data-testid="mock-line-chart" data-labels={JSON.stringify(props.data?.labels)} />,
-  Scatter: (props) => <div data-testid="mock-scatter-chart" />,
+  Scatter: () => <div data-testid="mock-scatter-chart" />,
 }));
+
+function DatasetNavigationControls() {
+  const navigate = useNavigate();
+  return (
+    <button type="button" onClick={() => navigate('/datasets/2/visualizations')}>
+      Go to dataset 2
+    </button>
+  );
+}
 
 describe('VisualizationsPage & Error Resilience', () => {
   const sampleDataset = {
@@ -116,6 +125,7 @@ describe('VisualizationsPage & Error Resilience', () => {
   const renderComponent = (initialPath = '/datasets/1/visualizations') => {
     return render(
       <MemoryRouter initialEntries={[initialPath]}>
+        <DatasetNavigationControls />
         <WorkflowProvider>
           <Routes>
             <Route path="/visualizations" element={<VisualizationsPage />} />
@@ -198,6 +208,71 @@ describe('VisualizationsPage & Error Resilience', () => {
         'cholesterol',
         'treatment_group'
       );
+    });
+  });
+
+  it('discards a grouped summary from a previous dataset after navigation', async () => {
+    const secondDataset = { ...sampleDataset, id: 2, name: 'Second Cohort' };
+    const staleGrouped = [
+      { groupName: 'Stale', groupValue: 'Stale', count: 10, mean: 99, median: 99 },
+    ];
+    const freshGrouped = [
+      { groupName: 'Fresh', groupValue: 'Fresh', count: 10, mean: 11, median: 11 },
+    ];
+    let resolveStale;
+
+    datasetService.getDataset.mockImplementation((id) =>
+      Promise.resolve({ data: id === '2' ? secondDataset : sampleDataset })
+    );
+    analysisService.getGroupedSummary.mockReset().mockImplementation((id, num) => {
+      if (id === '2') {
+        return Promise.resolve({ data: freshGrouped });
+      }
+      if (num === 'cholesterol') {
+        return new Promise((resolve) => { resolveStale = resolve; });
+      }
+      return Promise.resolve({ data: sampleGrouped });
+    });
+
+    renderComponent();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-bar-chart').getAttribute('data-labels')).toContain('Placebo');
+    });
+
+    fireEvent.change(screen.getByLabelText(/Select continuous variable for group comparison/i), {
+      target: { value: 'cholesterol' },
+    });
+
+    await waitFor(() => {
+      expect(analysisService.getGroupedSummary).toHaveBeenCalledWith(
+        '1',
+        'cholesterol',
+        'treatment_group'
+      );
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Go to dataset 2/i }));
+
+    await waitFor(() => {
+      expect(datasetService.getDataset).toHaveBeenCalledWith('2');
+      expect(analysisService.getGroupedSummary).toHaveBeenCalledWith(
+        '2',
+        'age',
+        'treatment_group'
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-bar-chart').getAttribute('data-labels')).toContain('Fresh');
+    });
+
+    resolveStale({ data: staleGrouped });
+
+    await waitFor(() => {
+      const labels = screen.getByTestId('mock-bar-chart').getAttribute('data-labels');
+      expect(labels).toContain('Fresh');
+      expect(labels).not.toContain('Stale');
     });
   });
 

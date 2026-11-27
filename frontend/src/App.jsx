@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { WorkflowProvider } from './context/WorkflowContext';
@@ -6,23 +6,24 @@ import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import ProtectedRoute from './components/ProtectedRoute';
 import RequireDatasetRoute from './components/RequireDatasetRoute';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
-import ForgotPasswordPage from './pages/ForgotPasswordPage';
-import ResetPasswordPage from './pages/ResetPasswordPage';
-import DashboardPage from './pages/DashboardPage';
-import DatasetsPage from './pages/DatasetsPage';
-import DatasetDetailPage from './pages/DatasetDetailPage';
-import AssociationsPage from './pages/AssociationsPage';
-import ResearchWorkflowPage from './pages/ResearchWorkflowPage';
-import AutoMlPage from './pages/AutoMlPage';
-import VisualizationsPage from './pages/VisualizationsPage';
-import DriftPage from './pages/DriftPage';
-import AskDatasetPage from './pages/AskDatasetPage';
-import FindingsPage from './pages/FindingsPage';
-import ExperimentsPage from './pages/ExperimentsPage';
-import ReportsPage from './pages/ReportsPage';
 import LandingPage from './pages/LandingPage';
+
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/RegisterPage'));
+const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const DatasetsPage = lazy(() => import('./pages/DatasetsPage'));
+const DatasetDetailPage = lazy(() => import('./pages/DatasetDetailPage'));
+const AssociationsPage = lazy(() => import('./pages/AssociationsPage'));
+const ResearchWorkflowPage = lazy(() => import('./pages/ResearchWorkflowPage'));
+const AutoMlPage = lazy(() => import('./pages/AutoMlPage'));
+const VisualizationsPage = lazy(() => import('./pages/VisualizationsPage'));
+const DriftPage = lazy(() => import('./pages/DriftPage'));
+const AskDatasetPage = lazy(() => import('./pages/AskDatasetPage'));
+const FindingsPage = lazy(() => import('./pages/FindingsPage'));
+const ExperimentsPage = lazy(() => import('./pages/ExperimentsPage'));
+const ReportsPage = lazy(() => import('./pages/ReportsPage'));
 
 function AppFrame() {
   const { isAuthenticated } = useAuth();
@@ -36,6 +37,12 @@ function AppFrame() {
       <div className="d-flex flex-grow-1 align-items-stretch">
         {showSidebar && <Sidebar />}
         <main className="flex-grow-1 min-w-0 w-100">
+          <Suspense fallback={
+            <div className="d-flex justify-content-center align-items-center p-5" role="status">
+              <div className="spinner-border text-primary" aria-hidden="true"></div>
+              <span className="visually-hidden">Loading page...</span>
+            </div>
+          }>
           <Routes>
                 {/* Public homepage */}
                 <Route path="/" element={<LandingPage />} />
@@ -376,6 +383,7 @@ function AppFrame() {
                 {/* Catch-all redirect */}
                 <Route path="*" element={<Navigate to={isAuthenticated ? "/dashboard" : "/"} replace />} />
           </Routes>
+          </Suspense>
         </main>
       </div>
       {location.pathname !== '/' && (

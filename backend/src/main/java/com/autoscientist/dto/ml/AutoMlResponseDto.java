@@ -15,6 +15,10 @@ public class AutoMlResponseDto {
     private String experimentName;
     private String problemType;
     private String targetColumn;
+    private Integer positiveClassIndex;
+    private String positiveClassLabel;
+    private Double decisionThreshold;
+    private String probabilityStatus;
     private List<ModelRunDto> models;
     private ModelRunDto bestModel;
     private List<FeatureImportanceDto> featureImportances;

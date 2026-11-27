@@ -1,15 +1,18 @@
 package com.autoscientist.service;
 
 import com.autoscientist.analysis.profiling.DatasetProfiler;
+import com.autoscientist.config.ResourceBudgetProperties;
 import com.autoscientist.dto.dataset.DatasetColumnDto;
 import com.autoscientist.dto.importing.ImportOptionsDto;
 import com.autoscientist.dto.importing.ImportPreviewDto;
 import com.autoscientist.entity.Dataset;
 import com.autoscientist.entity.DatasetColumn;
 import com.autoscientist.exception.BadRequestException;
-import com.autoscientist.util.CsvValidator;
+import com.autoscientist.exception.SafeErrorMessages;
+import com.autoscientist.util.CsvTable;
 import com.autoscientist.util.ExcelImportService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
@@ -18,7 +21,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -36,6 +38,7 @@ import java.util.Set;
  * The final commit happens in {@link DatasetService#uploadDataset}, which
  * applies the same options so preview and import can never disagree.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ImportPreviewService {
@@ -47,6 +50,7 @@ public class ImportPreviewService {
 
     private final ExcelImportService excelImportService;
     private final DatasetProfiler datasetProfiler;
+    private final ResourceBudgetProperties budget;
 
     public ImportPreviewDto preview(MultipartFile file, ImportOptionsDto options) {
         if (file == null || file.isEmpty()) {
@@ -55,6 +59,12 @@ public class ImportPreviewService {
         String filename = file.getOriginalFilename();
         if (!ExcelImportService.isSupportedFilename(filename)) {
             throw new BadRequestException("Unsupported file type. Upload a .csv, .xls or .xlsx file.");
+        }
+        long maxBytes = (long) budget.getMaxMb() * 1024L * 1024L;
+        if (file.getSize() > maxBytes) {
+            throw new com.autoscientist.exception.ResourceLimitExceededException(String.format(
+                    "Uploaded file is %d bytes, which exceeds the configured limit of %d MB.",
+                    file.getSize(), budget.getMaxMb()));
         }
         ImportOptionsDto opts = options != null ? options : ImportOptionsDto.builder().build();
         boolean excel = ExcelImportService.isExcelFilename(filename);
@@ -101,7 +111,8 @@ public class ImportPreviewService {
             try {
                 csvContent = new String(file.getBytes(), StandardCharsets.UTF_8);
             } catch (IOException e) {
-                throw new BadRequestException("Could not read the file: " + e.getMessage());
+                log.warn("Could not read preview file: {}", SafeErrorMessages.forLog(e.getMessage()));
+                throw new BadRequestException("Could not read the file.");
             }
             headerRow = 1;
             headerRowDetected = false;
@@ -109,20 +120,20 @@ public class ImportPreviewService {
         }
 
         byte[] csvBytes = csvContent.getBytes(StandardCharsets.UTF_8);
-        CsvValidator.ValidationResult validation =
-                CsvValidator.validateCsv(new ByteArrayInputStream(csvBytes));
+        CsvTable table = CsvTable.read(new ByteArrayInputStream(csvBytes),
+                budget.getMaxRows(), budget.getMaxColumns(), budget.getMaxCells());
 
-        List<String> headers = validation.getHeaders();
+        List<String> headers = table.getHeaders();
         List<List<String>> previewRows = readPreviewRows(csvContent);
 
-        // Type inference on the same profiler the real import uses, over the
-        // preview sample — labelled as a sample in the response.
+        // Type inference uses the same bounded table as the commit path, so a
+        // preview can never inspect more data than the importer will accept.
         List<DatasetColumnDto> columnDtos = new ArrayList<>();
-        Dataset scratch = Dataset.builder().name("_preview").rowCount(previewRows.size())
+        Dataset scratch = Dataset.builder().name("_preview").rowCount(table.getRowCount())
                 .columnCount(headers.size()).build();
         try {
             DatasetProfiler.ProfilingResult prof = datasetProfiler.profile(
-                    new ByteArrayInputStream(csvBytes), scratch);
+                    table, scratch, java.util.Collections.emptySet(), java.util.Collections.emptySet());
             for (DatasetColumn col : prof.getColumns()) {
                 columnDtos.add(DatasetColumnDto.builder()
                         .columnName(col.getColumnName())
@@ -140,18 +151,20 @@ public class ImportPreviewService {
                         .build());
             }
         } catch (Exception e) {
-            throw new BadRequestException("The data could not be parsed: " + e.getMessage());
+            log.warn("Preview parsing failed: {}", SafeErrorMessages.forLog(e.getMessage()));
+            throw new BadRequestException("The data could not be parsed. Check the file format and try again.");
         }
 
         builder.headers(headers)
                 .previewRows(previewRows)
-                .rowCount(validation.getRowCount())
-                .columnCount(validation.getColumnCount())
+                .rowCount(table.getRowCount())
+                .columnCount(table.getColumnCount())
                 .columns(columnDtos)
                 .sheetName(sheetName)
                 .headerRow(headerRow)
                 .headerRowDetected(headerRowDetected)
-                .warnings(buildWarnings(headers, validation, columnDtos, excel, headerRowDetected));
+                .warnings(buildWarnings(headers, table.getRowCount(), table.getColumnCount(),
+                        columnDtos, excel, headerRowDetected));
 
         return builder.build();
     }
@@ -200,7 +213,7 @@ public class ImportPreviewService {
     }
 
     private List<String> buildWarnings(List<String> headers,
-                                       CsvValidator.ValidationResult validation,
+                                       int rowCount, int columnCount,
                                        List<DatasetColumnDto> columns,
                                        boolean excel, boolean headerRowDetected) {
         List<String> warnings = new ArrayList<>();
@@ -221,7 +234,7 @@ public class ImportPreviewService {
         if (blank > 0) {
             warnings.add(blank + " column(s) had an empty header — they will be imported as column_1, column_2, ...");
         }
-        if (validation.getRowCount() == 0) {
+        if (rowCount == 0) {
             warnings.add("The file has a header row but no data rows.");
         }
         if (headerRowDetected) {
@@ -261,8 +274,8 @@ public class ImportPreviewService {
             }
         }
 
-        if (validation.getRowCount() > 0 && validation.getRowCount() < 5) {
-            warnings.add("Only " + validation.getRowCount()
+        if (rowCount > 0 && rowCount < 5) {
+            warnings.add("Only " + rowCount
                     + " data row(s): statistical tests and models will be unreliable.");
         }
 

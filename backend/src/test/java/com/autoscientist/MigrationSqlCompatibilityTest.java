@@ -48,6 +48,45 @@ class MigrationSqlCompatibilityTest {
         assertThat(violations).as("MySQL-incompatible SQL in db/migration").isEmpty();
     }
 
+    @Test
+    void migrationVersionsAreOrderedAndUnique() throws IOException {
+        List<Integer> versions = new ArrayList<>();
+        try (Stream<Path> files = Files.list(MIGRATIONS)) {
+            for (Path file : files.filter(p -> p.toString().endsWith(".sql")).toList()) {
+                String name = file.getFileName().toString();
+                assertThat(name).matches("V\\d+__.*\\.sql");
+                versions.add(Integer.parseInt(name.substring(1, name.indexOf("__"))));
+            }
+        }
+
+        versions.sort(Integer::compareTo);
+        assertThat(versions).containsExactly(1, 2, 3, 4, 5, 6, 7);
+    }
+
+    @Test
+    void mysqlOnlyMigrationsAreExplicitlyDocumented() throws IOException {
+        String v5 = Files.readString(MIGRATIONS.resolve("V5__jobs_and_model_artifacts.sql"));
+        assertThat(v5).doesNotContain("information_schema");
+
+        for (String name : new String[]{
+                "V2__provenance_delta.sql", "V3__association_confidence_intervals.sql",
+                "V6__model_artifact_longblob.sql", "V7__job_ownership_and_parameters.sql"}) {
+            String sql = Files.readString(MIGRATIONS.resolve(name));
+            assertThat(sql).as(name + " must guard MySQL-only DDL")
+                    .contains("information_schema")
+                    .contains("PREPARE");
+        }
+    }
+
+    @Test
+    void v6GuardHandlesMissingAndAlreadyWideArtifactTables() throws IOException {
+        String v6 = Files.readString(MIGRATIONS.resolve("V6__model_artifact_longblob.sql"));
+        assertThat(v6).contains("information_schema.TABLES")
+                .contains("information_schema.COLUMNS")
+                .contains("COLUMN_TYPE <> 'longblob'")
+                .contains("MODIFY COLUMN payload LONGBLOB NOT NULL");
+    }
+
     private static String stripComments(String sql) {
         StringBuilder out = new StringBuilder(sql.length());
         for (String line : sql.split("\n", -1)) {

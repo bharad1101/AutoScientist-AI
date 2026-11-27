@@ -157,6 +157,8 @@ public class FairnessEngine {
                 .sensitiveColumn(sensitiveCol)
                 .demographicParityRatio(disparityRatio)
                 .disparateImpactStatus(status)
+                .positiveClassIndex(split.getPositiveClassIndex())
+                .positiveClassLabel(split.getPositiveClassLabel())
                 .groupPositiveRates(groupPositiveRates)
                 .groupErrorRates(groupErrorRates)
                 .groupSampleSizes(groupSampleSizes)

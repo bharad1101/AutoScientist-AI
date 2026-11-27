@@ -44,9 +44,12 @@ const LoginPage = () => {
         setError(err.response.data?.message || 'Invalid email or password.');
       } else if (err.response.status === 400 && err.response.data?.data) {
         const fieldError = Object.values(err.response.data.data)[0];
-        setError(fieldError || err.response.data?.message || 'Invalid input. Please check your credentials.');
+        const fieldMessage = typeof fieldError === 'string'
+          ? fieldError
+          : fieldError?.message;
+        setError(fieldMessage || err.response.data?.message || 'Invalid input. Please check your credentials.');
       } else {
-        setError(err.response.data?.message || err.message || 'Authentication failed. Please try again.');
+        setError(err.response?.data?.message || 'Authentication failed. Please try again.');
       }
     } finally {
       setSubmitting(false);

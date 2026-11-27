@@ -1,8 +1,9 @@
 package com.autoscientist.dto.auth;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -10,12 +11,16 @@ import lombok.NoArgsConstructor;
 @Data
 @Builder
 @NoArgsConstructor
-@AllArgsConstructor
 public class ForgotPasswordRequest {
 
     @NotBlank(message = "Email is required")
     @Email(message = "Valid email is required")
     private String email;
+
+    @JsonCreator
+    public ForgotPasswordRequest(@JsonProperty("email") String email) {
+        setEmail(email);
+    }
 
     public void setEmail(String email) {
         this.email = email != null ? email.trim() : null;

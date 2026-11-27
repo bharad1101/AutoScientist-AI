@@ -86,7 +86,7 @@ const ResearchWorkflowPage = () => {
         }
       } catch (err) {
         console.error('Failed to init research workspace:', err);
-        setError(err.response?.data?.message || err.message || 'Failed to initialize research workspace.');
+        setError(err.response?.data?.message || 'Failed to initialize research workspace.');
       } finally {
         setLoading(false);
       }

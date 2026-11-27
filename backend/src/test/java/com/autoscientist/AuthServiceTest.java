@@ -16,6 +16,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -65,7 +66,7 @@ class AuthServiceTest {
         when(userRepository.existsByEmailIgnoreCase("ada@scientific.org")).thenReturn(false);
         when(passwordEncoder.encode("science123")).thenReturn("encoded_secret");
         when(userRepository.saveAndFlush(any(User.class))).thenReturn(sampleUser);
-        when(jwtUtils.generateTokenFromUsername("ada@scientific.org")).thenReturn("mocked.jwt.token");
+        when(jwtUtils.generateTokenFromCredentials("ada@scientific.org", "encoded_secret")).thenReturn("mocked.jwt.token");
 
         AuthResponse resp = authService.register(req);
 
@@ -83,7 +84,7 @@ class AuthServiceTest {
         when(userRepository.existsByEmailIgnoreCase("ada@scientific.org")).thenReturn(false);
         when(passwordEncoder.encode("science123")).thenReturn("encoded_secret");
         when(userRepository.saveAndFlush(any(User.class))).thenReturn(sampleUser);
-        when(jwtUtils.generateTokenFromUsername("ada@scientific.org")).thenReturn("mocked.jwt.token");
+        when(jwtUtils.generateTokenFromCredentials("ada@scientific.org", "encoded_secret")).thenReturn("mocked.jwt.token");
 
         authService.register(req);
 
@@ -92,11 +93,14 @@ class AuthServiceTest {
     }
 
     @Test
-    void testRegisterDuplicateEmailThrowsException() {
+    void testRegisterDuplicateEmailThrowsGenericExceptionWithoutLeakingTheEmail() {
         RegisterRequest req = new RegisterRequest("Dr. Ada Lovelace", "ada@scientific.org", "science123");
         when(userRepository.existsByEmailIgnoreCase("ada@scientific.org")).thenReturn(true);
 
-        assertThrows(BadRequestException.class, () -> authService.register(req));
+        BadRequestException ex = assertThrows(BadRequestException.class, () -> authService.register(req));
+
+        assertFalse(ex.getMessage().contains("ada@scientific.org"));
+        assertFalse(ex.getMessage().toLowerCase().contains("already"));
         verify(userRepository, never()).saveAndFlush(any(User.class));
     }
 
@@ -123,7 +127,8 @@ class AuthServiceTest {
 
         BadRequestException ex = assertThrows(BadRequestException.class, () -> authService.register(req));
 
-        assertTrue(ex.getMessage().contains("already registered"));
+        assertFalse(ex.getMessage().contains("ada@scientific.org"));
+        assertFalse(ex.getMessage().toLowerCase().contains("already"));
     }
 
     @Test
@@ -140,6 +145,16 @@ class AuthServiceTest {
         assertNotNull(resp);
         assertEquals("mocked.jwt.token", resp.getToken());
         assertEquals(sampleUser.getEmail(), resp.getUser().getEmail());
+    }
+
+    @Test
+    void testLoginRejectsPasswordOverBcryptByteLimitWithoutCallingAuthenticationManager() {
+        LoginRequest req = new LoginRequest("ada@scientific.org", "😀".repeat(25));
+
+        BadCredentialsException ex = assertThrows(BadCredentialsException.class, () -> authService.login(req));
+
+        assertEquals("Invalid email or password.", ex.getMessage());
+        verifyNoInteractions(authenticationManager);
     }
 
     @Test

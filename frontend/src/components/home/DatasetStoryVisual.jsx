@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 
 /**
@@ -9,7 +9,6 @@ import { useNavigate } from 'react-router-dom';
  */
 export default function DatasetStoryVisual({ isAuthenticated }) {
   const navigate = useNavigate();
-  const [filterActive, setFilterActive] = useState('all');
 
   const sampleRows = [
     { id: 'PT-10491', age: 54, chol: 218, arm: 'Arm A (Active)', bp: 128, score: 78.4 },

@@ -63,7 +63,7 @@ export default function ReportsPage() {
       }
     } catch (err) {
       console.error('Failed to load reports workspace:', err);
-      setError(err.response?.data?.message || err.message || 'Unable to load report workspace.');
+      setError(err.response?.data?.message || 'Unable to load report workspace.');
     } finally {
       setLoading(false);
     }
@@ -110,7 +110,7 @@ export default function ReportsPage() {
       }
     } catch (err) {
       console.error('Report generation error:', err);
-      setError(err.response?.data?.message || err.message || 'Failed to generate scientific report.');
+      setError(err.response?.data?.message || 'Failed to generate scientific report.');
     } finally {
       setGenerating(false);
     }

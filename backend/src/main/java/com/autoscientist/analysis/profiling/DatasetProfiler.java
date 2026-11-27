@@ -2,17 +2,12 @@ package com.autoscientist.analysis.profiling;
 
 import com.autoscientist.entity.Dataset;
 import com.autoscientist.entity.DatasetColumn;
+import com.autoscientist.util.CsvTable;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.commons.csv.CSVFormat;
-import org.apache.commons.csv.CSVParser;
-import org.apache.commons.csv.CSVRecord;
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
 import org.springframework.stereotype.Component;
 
-import java.io.BufferedReader;
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -65,31 +60,16 @@ public class DatasetProfiler {
      */
     public ProfilingResult profile(InputStream inputStream, Dataset dataset,
                                    Set<String> forceIdentifier, Set<String> forceNonIdentifier) throws Exception {
+        return profile(CsvTable.read(inputStream), dataset, forceIdentifier, forceNonIdentifier);
+    }
+
+    public ProfilingResult profile(CsvTable table, Dataset dataset,
+                                   Set<String> forceIdentifier, Set<String> forceNonIdentifier) throws Exception {
         Set<String> forceId = normalizeOverrideNames(forceIdentifier);
         Set<String> forceNonId = normalizeOverrideNames(forceNonIdentifier);
-        List<String> headers;
-        List<List<String>> rows = new ArrayList<>();
+        List<String> headers = table.getHeaders();
 
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
-             CSVParser parser = CSVFormat.DEFAULT.builder()
-                     .setHeader()
-                     .setSkipHeaderRecord(true)
-                     .setIgnoreHeaderCase(false)
-                     .setTrim(true)
-                     .build()
-                     .parse(reader)) {
-
-            headers = new ArrayList<>(parser.getHeaderNames());
-            for (CSVRecord record : parser) {
-                List<String> rowValues = new ArrayList<>();
-                for (int i = 0; i < headers.size(); i++) {
-                    rowValues.add(record.get(i));
-                }
-                rows.add(rowValues);
-            }
-        }
-
-        int totalRows = rows.size();
+        int totalRows = table.getRowCount();
         int totalCols = headers.size();
         List<DatasetColumn> columns = new ArrayList<>();
 
@@ -99,10 +79,7 @@ public class DatasetProfiler {
 
         for (int colIdx = 0; colIdx < totalCols; colIdx++) {
             String colName = headers.get(colIdx);
-            List<String> rawValues = new ArrayList<>();
-            for (List<String> row : rows) {
-                rawValues.add(row.get(colIdx));
-            }
+            List<String> rawValues = table.getColumn(colIdx);
 
             // Missing values analysis
             int missingCount = 0;
@@ -398,6 +375,25 @@ public class DatasetProfiler {
     }
 
     private boolean isDateOrTime(String str) {
+        // Cheap pre-filter: every supported format starts with a digit and contains
+        // a date separator. Without this, numeric/categorical values paid for ten
+        // formatter failures each (exception-heavy and dominated large uploads).
+        if (str == null || str.length() < 8 || str.length() > 19
+                || !Character.isDigit(str.charAt(0))) {
+            return false;
+        }
+        boolean hasDateSeparator = false;
+        for (int i = 0; i < str.length(); i++) {
+            char c = str.charAt(i);
+            if (c == '-' || c == '/') {
+                hasDateSeparator = true;
+                break;
+            }
+        }
+        if (!hasDateSeparator) {
+            return false;
+        }
+
         List<DateTimeFormatter> formatters = Arrays.asList(
                 DateTimeFormatter.ISO_LOCAL_DATE,
                 DateTimeFormatter.ISO_LOCAL_DATE_TIME,

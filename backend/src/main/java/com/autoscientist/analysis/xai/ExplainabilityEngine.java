@@ -31,9 +31,15 @@ public class ExplainabilityEngine {
         Random rng = new Random(42);
 
         for (int j = 0; j < p; j++) {
-            double[][] permutedX = copyMatrix(xVal);
-            shuffleColumn(permutedX, j, rng);
-            double permutedScore = evaluateMetric(model, permutedX, yVal, problemType);
+            double[] original = new double[xVal.length];
+            for (int i = 0; i < xVal.length; i++) {
+                original[i] = xVal[i][j];
+            }
+            shuffleColumn(xVal, j, rng);
+            double permutedScore = evaluateMetric(model, xVal, yVal, problemType);
+            for (int i = 0; i < xVal.length; i++) {
+                xVal[i][j] = original[i];
+            }
             importanceScores[j] = Math.max(0.0, baselineScore - permutedScore);
         }
 
@@ -116,14 +122,6 @@ public class ExplainabilityEngine {
             }
             return (double) correct / y.length;
         }
-    }
-
-    private double[][] copyMatrix(double[][] src) {
-        double[][] dst = new double[src.length][src[0].length];
-        for (int i = 0; i < src.length; i++) {
-            System.arraycopy(src[i], 0, dst[i], 0, src[i].length);
-        }
-        return dst;
     }
 
     private void shuffleColumn(double[][] matrix, int colIndex, Random rng) {

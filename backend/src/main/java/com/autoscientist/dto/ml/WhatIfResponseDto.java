@@ -18,6 +18,14 @@ public class WhatIfResponseDto {
     private Double confidence;
     /** false when the model cannot produce an honest probability score. */
     private boolean confidenceAvailable;
+    private Double positiveClassProbability;
+    private Integer predictedClassIndex;
+    private Integer positiveClassIndex;
+    private String positiveClassLabel;
+    private Integer probabilityClassIndex;
+    private String probabilityClassLabel;
+    private String probabilityStatus;
+    private Double decisionThreshold;
     /** Mean of the training target — context for the predicted value. */
     private Double baselineMean;
     private Double deltaFromBaseline;
@@ -25,6 +33,7 @@ public class WhatIfResponseDto {
 
     /** Prediction of the reference profile (median/mode of every feature). */
     private Double referencePrediction;
+    private String referenceClass;
     private String referenceDescription;
     /** Raw features the model expects, so the UI can render correct inputs. */
     private List<WhatIfFeatureDto> featureSchema;

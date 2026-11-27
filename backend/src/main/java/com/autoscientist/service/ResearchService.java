@@ -94,6 +94,11 @@ public class ResearchService {
         Hypothesis hypothesis = hypothesisRepository.findById(hypothesisId)
                 .orElseThrow(() -> new ResourceNotFoundException("Hypothesis not found with id: " + hypothesisId));
 
+        if (hypothesis.getResearchQuestion() == null
+                || !hypothesis.getResearchQuestion().getId().equals(rqId)) {
+            throw new UnauthorizedException("Unauthorized access to hypothesis.");
+        }
+
         Dataset dataset = rq.getDataset();
 
         // Resolve the hypothesis variables case-insensitively against the stored columns so

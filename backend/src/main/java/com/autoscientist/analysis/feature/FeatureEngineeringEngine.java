@@ -66,6 +66,21 @@ public class FeatureEngineeringEngine {
         public Map<String, Integer> getClassMap() { return classMap; }
         public Map<Integer, String> getReverseClassMap() { return reverseClassMap; }
         public Map<String, Object> getPreprocessingConfig() { return preprocessingConfig; }
+
+        public boolean isBinaryClassification() {
+            return com.autoscientist.analysis.ml.ClassificationSemantics
+                    .isBinaryClassification(problemType, reverseClassMap);
+        }
+
+        public Integer getPositiveClassIndex() {
+            return com.autoscientist.analysis.ml.ClassificationSemantics
+                    .positiveClassIndex(problemType, reverseClassMap);
+        }
+
+        public String getPositiveClassLabel() {
+            return com.autoscientist.analysis.ml.ClassificationSemantics
+                    .positiveClassLabel(problemType, reverseClassMap);
+        }
     }
 
     public DatasetSplit prepareDataset(InputStream inputStream, List<DatasetColumn> columns,

@@ -2,6 +2,7 @@ package com.autoscientist;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Table;
 import org.junit.jupiter.api.Test;
@@ -13,7 +14,9 @@ import org.springframework.util.StringUtils;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -72,6 +75,23 @@ class SchemaReferenceSyncTest {
                 .isEmpty();
     }
 
+    @Test
+    void passwordResetReferenceMatchesMigrationAndEntity() throws IOException {
+        String schema = Files.readString(SCHEMA_PATH).toLowerCase();
+        String block = extractCreateTableBlock(schema, "password_reset_tokens");
+        assertThat(block).as("password_reset_tokens table must exist").isNotNull();
+        assertThat(columnPresent(block, "id")).as("id column").isTrue();
+        assertThat(columnPresent(block, "user_id")).as("user_id column").isTrue();
+        assertThat(columnPresent(block, "token_hash")).as("token_hash column").isTrue();
+        assertThat(columnPresent(block, "expires_at")).as("expires_at column").isTrue();
+        assertThat(columnPresent(block, "used_at")).as("used_at column").isTrue();
+        assertThat(columnPresent(block, "created_at")).as("created_at column").isTrue();
+        assertThat(block).contains("id bigint auto_increment primary key");
+        assertThat(block).contains("constraint uk_password_reset_token_hash unique (token_hash)");
+        assertThat(block).contains("token_hash varchar(64) not null");
+        assertThat(block).contains("constraint fk_password_reset_user foreign key (user_id)");
+    }
+
     /** table name -> set of physical column names derived from the entity mapping */
     private static Map<String, Set<String>> scanEntityColumns() {
         ClassPathScanningCandidateComponentProvider scanner =
@@ -95,12 +115,15 @@ class SchemaReferenceSyncTest {
             for (var field : entityClass.getDeclaredFields()) {
                 Column column = field.getAnnotation(Column.class);
                 JoinColumn joinColumn = field.getAnnotation(JoinColumn.class);
+                Id id = field.getAnnotation(Id.class);
                 if (joinColumn != null && StringUtils.hasText(joinColumn.name())) {
                     columns.add(joinColumn.name().toLowerCase());
                 } else if (column != null) {
                     columns.add(StringUtils.hasText(column.name())
                             ? column.name().toLowerCase()
                             : toSnakeCase(field.getName()));
+                } else if (id != null) {
+                    columns.add(toSnakeCase(field.getName()));
                 }
             }
             result.put(tableName, columns);

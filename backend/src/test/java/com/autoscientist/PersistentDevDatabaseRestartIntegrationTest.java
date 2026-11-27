@@ -49,7 +49,7 @@ public class PersistentDevDatabaseRestartIntegrationTest {
                 "--spring.jpa.hibernate.ddl-auto=update",
                 "--spring.jpa.database-platform=org.hibernate.dialect.H2Dialect",
                 "--app.upload.dir=" + tempDir.resolve("uploads").toAbsolutePath(),
-                "--app.jwt.secret=404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970",
+                "--app.jwt.secret=ab1dC1bTaQv163ONqAbWorqJCrOy0hKC629dDsQRscvL3Lm4RKGC7WEOkzrC4J+mbadfNxBIclhc5tagaZjWvg==",
                 "--app.jwt.expiration-ms=86400000",
                 "--server.port=0" // random port to avoid port binding conflicts
         };

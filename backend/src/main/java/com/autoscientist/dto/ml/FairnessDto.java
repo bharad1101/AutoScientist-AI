@@ -13,6 +13,8 @@ public class FairnessDto {
     private String sensitiveColumn;
     private double demographicParityRatio;
     private String disparateImpactStatus; // PASS, FLAGGED, NOT_APPLICABLE
+    private Integer positiveClassIndex;
+    private String positiveClassLabel;
     private Map<String, Double> groupPositiveRates;
     private Map<String, Double> groupErrorRates;
     /** Number of validation rows behind each group statistic. */

@@ -1,20 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Line, Bar } from 'react-chartjs-2';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Tooltip,
-  Legend,
-} from 'chart.js';
+import '../utils/chartSetup';
 import { datasetService } from '../services/datasetService';
 import { analysisService } from '../services/analysisService';
 import PrerequisiteAlert from '../components/PrerequisiteAlert';
-
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend);
 
 export default function DriftPage() {
   const [datasets, setDatasets] = useState([]);
@@ -40,7 +29,7 @@ export default function DriftPage() {
           setTargetId(res.data[0].id);
         }
       }
-    } catch (err) {
+    } catch {
       setError('Failed to load datasets.');
     }
   };
@@ -61,10 +50,12 @@ export default function DriftPage() {
     }
   };
 
+  const columnDrifts = useMemo(() => driftReport?.columnDrifts || [], [driftReport]);
+
   // Most drifted numeric feature drives the distribution comparison chart.
   const numericDrifts = useMemo(
-    () => (driftReport?.columnDrifts || []).filter((c) => c.dataType === 'NUMERIC' && c.binEdges?.length),
-    [driftReport]
+    () => columnDrifts.filter((c) => c.dataType === 'NUMERIC' && c.binEdges?.length),
+    [columnDrifts]
   );
 
   const [selectedDriftColumn, setSelectedDriftColumn] = useState('');
@@ -116,7 +107,7 @@ export default function DriftPage() {
   }, [activeDrift]);
 
   const psiChartData = useMemo(() => {
-    const rows = driftReport?.columnDrifts || [];
+    const rows = columnDrifts;
     if (!rows.length) return null;
     return {
       labels: rows.map((c) => c.columnName),
@@ -131,7 +122,7 @@ export default function DriftPage() {
         },
       ],
     };
-  }, [driftReport]);
+  }, [columnDrifts]);
 
   return (
     <div className="container-fluid py-4 px-4">
@@ -237,7 +228,9 @@ export default function DriftPage() {
               <div className="card shadow-sm border-0 p-3 text-center h-100">
                 <span className="text-muted small fw-semibold">Overall Population Stability Index (PSI)</span>
                 <h2 className="fw-bold my-2 text-primary">
-                  {driftReport.overallDriftIndex?.toFixed(4)}
+                  {driftReport.overallDriftIndex != null
+                    ? Number(driftReport.overallDriftIndex).toFixed(4)
+                    : 'Not available'}
                 </h2>
                 <div>
                   <span
@@ -246,12 +239,19 @@ export default function DriftPage() {
                         ? 'bg-success'
                         : driftReport.overallStatus === 'LOW_RISK'
                         ? 'bg-warning text-dark'
-                        : 'bg-danger'
+                        : driftReport.overallStatus
+                        ? 'bg-danger'
+                        : 'bg-secondary'
                     } px-3 py-2`}
                   >
-                    {driftReport.overallStatus}
+                    {driftReport.overallStatus || 'Not available'}
                   </span>
                 </div>
+                {driftReport.overallDriftIndex == null && (
+                  <small className="text-muted mt-2">
+                    No common features had enough aligned values to calculate an overall PSI.
+                  </small>
+                )}
               </div>
             </div>
 
@@ -292,15 +292,15 @@ export default function DriftPage() {
           </div>
 
           {/* Per-Feature PSI Overview */}
-          {psiChartData && (
-            <div className="card shadow-sm border-0 mb-4">
-              <div className="card-header bg-white py-3 border-0">
-                <h5 className="fw-bold mb-0">Population Stability Index by Feature</h5>
-                <small className="text-muted">
-                  PSI &ge; 0.25 indicates significant drift, &ge; 0.10 moderate drift.
-                </small>
-              </div>
-              <div className="card-body">
+          <div className="card shadow-sm border-0 mb-4" data-testid="drift-psi-section">
+            <div className="card-header bg-white py-3 border-0">
+              <h5 className="fw-bold mb-0">Population Stability Index by Feature</h5>
+              <small className="text-muted">
+                PSI &ge; 0.25 indicates significant drift, &ge; 0.10 moderate drift.
+              </small>
+            </div>
+            <div className="card-body">
+              {psiChartData ? (
                 <div style={{ height: '260px' }}>
                   <Bar
                     data={psiChartData}
@@ -315,11 +315,33 @@ export default function DriftPage() {
                     }}
                   />
                 </div>
+              ) : (
+                <div className="p-4 text-center bg-light rounded border">
+                  <i className="bi bi-bar-chart text-muted fs-3 d-block mb-2"></i>
+                  <p className="text-muted small mb-0">
+                    No per-feature PSI scores are available. The cohorts may not share any analyzable columns.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Reference vs Target Distribution Comparison */}
+          {numericDrifts.length === 0 && (
+            <div className="card shadow-sm border-0 mb-4" data-testid="drift-distribution-empty">
+              <div className="card-header bg-white py-3 border-0">
+                <h5 className="fw-bold mb-0">Reference vs Target Distribution</h5>
+              </div>
+              <div className="card-body">
+                <div className="p-4 text-center bg-light rounded border">
+                  <i className="bi bi-graph-up text-muted fs-3 d-block mb-2"></i>
+                  <p className="text-muted small mb-0">
+                    No numeric features with aligned histogram bins are available for a distribution comparison.
+                  </p>
+                </div>
               </div>
             </div>
           )}
-
-          {/* Reference vs Target Distribution Comparison */}
           {numericDrifts.length > 0 && (
             <div className="card shadow-sm border-0 mb-4">
               <div className="card-header bg-white py-3 border-0 d-flex flex-wrap justify-content-between align-items-center gap-2">
@@ -407,7 +429,16 @@ export default function DriftPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {driftReport.columnDrifts?.map((c) => (
+                    {columnDrifts.length === 0 && (
+                      <tr>
+                        <td colSpan={8}>
+                          <div className="p-4 text-center text-muted small" data-testid="drift-table-empty">
+                            No feature-level drift rows are available for these two cohorts.
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    {columnDrifts.map((c) => (
                       <tr key={c.columnName}>
                         <td className="fw-semibold text-primary">{c.columnName}</td>
                         <td>
